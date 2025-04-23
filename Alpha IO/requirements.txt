@@ -1,0 +1,12 @@
+openai
+faiss-cpu
+tweepy
+yfinance
+pandas
+numpy
+scikit-learn
+streamlit
+flask
+web3
+python-dotenv
+plotly

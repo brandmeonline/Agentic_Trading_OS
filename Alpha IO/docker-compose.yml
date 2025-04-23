@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  agentic:
+    build: .
+    container_name: trading_agentic_core
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"  # Streamlit dashboard
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY}
+      - WALLET_PUBLIC_ADDRESS=${WALLET_PUBLIC_ADDRESS}
+      - WEB3_INFURA_URL=${WEB3_INFURA_URL}
+    tty: true
+    stdin_open: true
