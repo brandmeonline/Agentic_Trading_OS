@@ -182,23 +182,111 @@
 
 {% block scripts %}
 <script>
-    // Initialize charts
+    // Chart instances
+    let equityChart = null;
+    let pnlChart = null;
+    let symbolChart = null;
+    let drawdownChart = null;
+    let analyticsData = { trades: [], stats: null };
+
+    // Initialize charts and load data
     document.addEventListener('DOMContentLoaded', function() {
-        initEquityChart();
-        initPnlChart();
-        initSymbolChart();
-        initDrawdownChart();
+        initCharts();
+        loadAnalyticsData();
+
+        // Period button handlers
+        document.querySelectorAll('.chart-controls .btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelector('.chart-controls .btn.active').classList.remove('active');
+                this.classList.add('active');
+                updateEquityChart(this.dataset.period);
+            });
+        });
     });
 
-    function initEquityChart() {
-        const ctx = document.getElementById('equityChart').getContext('2d');
-        new Chart(ctx, {
+    function loadAnalyticsData() {
+        // Fetch trades and stats in parallel
+        Promise.all([
+            fetch('/api/trades?limit=500').then(r => r.json()),
+            fetch('/api/stats').then(r => r.json())
+        ])
+        .then(([trades, stats]) => {
+            analyticsData.trades = Array.isArray(trades) ? trades : [];
+            analyticsData.stats = stats;
+
+            // Process and update all charts
+            processTradeData();
+            updateAllCharts();
+            updateWinLossBreakdown();
+            updateMonthlyReturns();
+        })
+        .catch(err => console.error('Failed to load analytics data:', err));
+    }
+
+    function processTradeData() {
+        const trades = analyticsData.trades;
+        if (!trades.length) return;
+
+        // Calculate equity curve
+        const initialCapital = 100000;
+        let equity = initialCapital;
+        analyticsData.equityCurve = [{ date: 'Start', value: initialCapital }];
+
+        trades.forEach(t => {
+            equity += (t.pnl || 0);
+            analyticsData.equityCurve.push({
+                date: t.time || new Date().toISOString(),
+                value: equity
+            });
+        });
+
+        // Calculate P&L distribution
+        const pnlBuckets = {
+            '<-5%': 0, '-5 to -2%': 0, '-2 to 0%': 0,
+            '0 to 2%': 0, '2 to 5%': 0, '>5%': 0
+        };
+
+        trades.forEach(t => {
+            const pnlPct = t.pnl_pct || (t.pnl / (t.price * t.qty) * 100) || 0;
+            if (pnlPct < -5) pnlBuckets['<-5%']++;
+            else if (pnlPct < -2) pnlBuckets['-5 to -2%']++;
+            else if (pnlPct < 0) pnlBuckets['-2 to 0%']++;
+            else if (pnlPct < 2) pnlBuckets['0 to 2%']++;
+            else if (pnlPct < 5) pnlBuckets['2 to 5%']++;
+            else pnlBuckets['>5%']++;
+        });
+        analyticsData.pnlDistribution = pnlBuckets;
+
+        // Calculate symbol distribution
+        const symbolCounts = {};
+        trades.forEach(t => {
+            symbolCounts[t.symbol] = (symbolCounts[t.symbol] || 0) + 1;
+        });
+        analyticsData.symbolDistribution = symbolCounts;
+
+        // Calculate drawdown
+        let peak = initialCapital;
+        analyticsData.drawdown = analyticsData.equityCurve.map(point => {
+            if (point.value > peak) peak = point.value;
+            const dd = ((peak - point.value) / peak) * 100;
+            return { date: point.date, value: dd };
+        });
+
+        analyticsData.maxDrawdown = Math.max(...analyticsData.drawdown.map(d => d.value));
+        analyticsData.currentDrawdown = analyticsData.drawdown.length > 0 ?
+            analyticsData.drawdown[analyticsData.drawdown.length - 1].value : 0;
+    }
+
+    function initCharts() {
+        // Equity Chart
+        const eqCtx = document.getElementById('equityChart').getContext('2d');
+        equityChart = new Chart(eqCtx, {
             type: 'line',
             data: {
-                labels: ['Start', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5'],
+                labels: ['Start'],
                 datasets: [{
                     label: 'Portfolio Value',
-                    data: [100000, 100000, 100000, 100000, 100000, 100000],
+                    data: [100000],
                     borderColor: '#6366f1',
                     backgroundColor: 'rgba(99, 102, 241, 0.1)',
                     fill: true,
@@ -210,19 +298,15 @@
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: {
-                    y: {
-                        beginAtZero: false,
-                        grid: { color: 'rgba(255,255,255,0.05)' }
-                    },
+                    y: { beginAtZero: false, grid: { color: 'rgba(255,255,255,0.05)' } },
                     x: { grid: { display: false } }
                 }
             }
         });
-    }
 
-    function initPnlChart() {
-        const ctx = document.getElementById('pnlChart').getContext('2d');
-        new Chart(ctx, {
+        // P&L Distribution Chart
+        const pnlCtx = document.getElementById('pnlChart').getContext('2d');
+        pnlChart = new Chart(pnlCtx, {
             type: 'bar',
             data: {
                 labels: ['<-5%', '-5 to -2%', '-2 to 0%', '0 to 2%', '2 to 5%', '>5%'],
@@ -242,38 +326,34 @@
                 }
             }
         });
-    }
 
-    function initSymbolChart() {
-        const ctx = document.getElementById('symbolChart').getContext('2d');
-        new Chart(ctx, {
+        // Symbol Distribution Chart
+        const symCtx = document.getElementById('symbolChart').getContext('2d');
+        symbolChart = new Chart(symCtx, {
             type: 'doughnut',
             data: {
-                labels: ['AAPL', 'SPY', 'BTC/USD'],
+                labels: ['No trades'],
                 datasets: [{
-                    data: [33, 33, 34],
-                    backgroundColor: ['#6366f1', '#8b5cf6', '#a855f7']
+                    data: [1],
+                    backgroundColor: ['#6366f1']
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: 'bottom' }
-                }
+                plugins: { legend: { position: 'bottom', labels: { color: '#e0e0e0' } } }
             }
         });
-    }
 
-    function initDrawdownChart() {
-        const ctx = document.getElementById('drawdownChart').getContext('2d');
-        new Chart(ctx, {
+        // Drawdown Chart
+        const ddCtx = document.getElementById('drawdownChart').getContext('2d');
+        drawdownChart = new Chart(ddCtx, {
             type: 'line',
             data: {
-                labels: ['Start', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5'],
+                labels: ['Start'],
                 datasets: [{
                     label: 'Drawdown',
-                    data: [0, 0, 0, 0, 0, 0],
+                    data: [0],
                     borderColor: '#ef4444',
                     backgroundColor: 'rgba(239, 68, 68, 0.1)',
                     fill: true,
@@ -285,14 +365,183 @@
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: {
-                    y: {
-                        reverse: true,
-                        grid: { color: 'rgba(255,255,255,0.05)' }
-                    },
+                    y: { reverse: true, grid: { color: 'rgba(255,255,255,0.05)' } },
                     x: { grid: { display: false } }
                 }
             }
         });
+    }
+
+    function updateAllCharts() {
+        updateEquityChart('all');
+        updatePnlChart();
+        updateSymbolChart();
+        updateDrawdownChart();
+    }
+
+    function updateEquityChart(period) {
+        if (!analyticsData.equityCurve || !equityChart) return;
+
+        let data = analyticsData.equityCurve;
+
+        // Filter by period
+        const now = new Date();
+        if (period === '1d') {
+            const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
+            data = data.filter(d => new Date(d.date) >= dayAgo);
+        } else if (period === '1w') {
+            const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            data = data.filter(d => new Date(d.date) >= weekAgo);
+        } else if (period === '1m') {
+            const monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            data = data.filter(d => new Date(d.date) >= monthAgo);
+        }
+
+        if (data.length === 0) data = [{ date: 'No data', value: 100000 }];
+
+        equityChart.data.labels = data.map(d => {
+            if (d.date === 'Start' || d.date === 'No data') return d.date;
+            const date = new Date(d.date);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        equityChart.data.datasets[0].data = data.map(d => d.value);
+        equityChart.update('none');
+    }
+
+    function updatePnlChart() {
+        if (!analyticsData.pnlDistribution || !pnlChart) return;
+
+        const buckets = analyticsData.pnlDistribution;
+        pnlChart.data.datasets[0].data = Object.values(buckets);
+        pnlChart.update('none');
+    }
+
+    function updateSymbolChart() {
+        if (!analyticsData.symbolDistribution || !symbolChart) return;
+
+        const dist = analyticsData.symbolDistribution;
+        const symbols = Object.keys(dist);
+        const counts = Object.values(dist);
+
+        if (symbols.length === 0) {
+            symbolChart.data.labels = ['No trades'];
+            symbolChart.data.datasets[0].data = [1];
+            symbolChart.data.datasets[0].backgroundColor = ['#6366f1'];
+        } else {
+            const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#f97316'];
+            symbolChart.data.labels = symbols;
+            symbolChart.data.datasets[0].data = counts;
+            symbolChart.data.datasets[0].backgroundColor = symbols.map((_, i) => colors[i % colors.length]);
+        }
+        symbolChart.update('none');
+    }
+
+    function updateDrawdownChart() {
+        if (!analyticsData.drawdown || !drawdownChart) return;
+
+        const data = analyticsData.drawdown;
+        if (data.length === 0) return;
+
+        drawdownChart.data.labels = data.map(d => {
+            if (d.date === 'Start') return d.date;
+            const date = new Date(d.date);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        drawdownChart.data.datasets[0].data = data.map(d => d.value);
+        drawdownChart.update('none');
+
+        // Update drawdown stats
+        document.querySelector('.drawdown-stats .dd-item:nth-child(1) .dd-value').textContent =
+            analyticsData.maxDrawdown.toFixed(2) + '%';
+        document.querySelector('.drawdown-stats .dd-item:nth-child(2) .dd-value').textContent =
+            analyticsData.currentDrawdown.toFixed(2) + '%';
+    }
+
+    function updateWinLossBreakdown() {
+        const trades = analyticsData.trades;
+        if (!trades.length) return;
+
+        const wins = trades.filter(t => (t.pnl || 0) > 0);
+        const losses = trades.filter(t => (t.pnl || 0) < 0);
+
+        const avgWin = wins.length > 0 ? wins.reduce((sum, t) => sum + t.pnl, 0) / wins.length : 0;
+        const avgLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + t.pnl, 0) / losses.length : 0;
+        const largestWin = wins.length > 0 ? Math.max(...wins.map(t => t.pnl)) : 0;
+        const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.pnl)) : 0;
+
+        const totalWins = wins.reduce((sum, t) => sum + t.pnl, 0);
+        const totalLosses = Math.abs(losses.reduce((sum, t) => sum + t.pnl, 0));
+        const profitFactor = totalLosses > 0 ? (totalWins / totalLosses).toFixed(2) : '-';
+
+        const expectancy = trades.length > 0 ?
+            trades.reduce((sum, t) => sum + (t.pnl || 0), 0) / trades.length : 0;
+
+        const breakdown = document.querySelector('.winloss-breakdown');
+        if (breakdown) {
+            breakdown.innerHTML = `
+                <div class="wl-item">
+                    <span class="wl-label">Avg Win</span>
+                    <span class="wl-value positive">$${avgWin.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Avg Loss</span>
+                    <span class="wl-value negative">$${avgLoss.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Largest Win</span>
+                    <span class="wl-value positive">$${largestWin.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Largest Loss</span>
+                    <span class="wl-value negative">$${largestLoss.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Profit Factor</span>
+                    <span class="wl-value">${profitFactor}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Expectancy</span>
+                    <span class="wl-value ${expectancy >= 0 ? 'positive' : 'negative'}">$${expectancy.toFixed(2)}</span>
+                </div>
+            `;
+        }
+    }
+
+    function updateMonthlyReturns() {
+        const trades = analyticsData.trades;
+        if (!trades.length) return;
+
+        // Group trades by month
+        const monthlyPnl = {};
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+        trades.forEach(t => {
+            const date = new Date(t.time);
+            const monthKey = months[date.getMonth()];
+            monthlyPnl[monthKey] = (monthlyPnl[monthKey] || 0) + (t.pnl || 0);
+        });
+
+        const container = document.querySelector('.monthly-returns');
+        if (container) {
+            // Show last 6 months
+            const currentMonth = new Date().getMonth();
+            const displayMonths = [];
+            for (let i = 5; i >= 0; i--) {
+                const monthIdx = (currentMonth - i + 12) % 12;
+                displayMonths.push(months[monthIdx]);
+            }
+
+            container.innerHTML = displayMonths.map(month => {
+                const pnl = monthlyPnl[month] || 0;
+                const pnlClass = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : 'neutral';
+                return `
+                    <div class="month-item">
+                        <span class="month-name">${month}</span>
+                        <span class="month-value ${pnlClass}">${pnl !== 0 ? (pnl > 0 ? '+' : '') + '$' + pnl.toFixed(0) : '-'}</span>
+                    </div>
+                `;
+            }).join('');
+        }
     }
 </script>
 {% endblock %}

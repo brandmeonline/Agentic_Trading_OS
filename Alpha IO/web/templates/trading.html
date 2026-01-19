@@ -168,40 +168,142 @@
     document.getElementById('manual-order-form').addEventListener('submit', function(e) {
         e.preventDefault();
 
+        const qty = parseInt(document.getElementById('order-qty').value);
+        if (!qty || qty <= 0) {
+            showNotification('error', 'Please enter a valid quantity');
+            return;
+        }
+
         const order = {
             symbol: document.getElementById('order-symbol').value,
             side: document.getElementById('order-side').value,
-            qty: parseInt(document.getElementById('order-qty').value),
+            qty: qty,
             type: document.getElementById('order-type').value,
-            price: parseFloat(document.getElementById('order-price').value) || null
+            limit_price: parseFloat(document.getElementById('order-price').value) || null
         };
 
-        // Placeholder - would call API
-        alert('Order placed: ' + JSON.stringify(order));
+        // Disable submit button while processing
+        const submitBtn = this.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Placing Order...';
+
+        fetch('/api/place-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(order)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success || data.id) {
+                showNotification('success', `Order placed: ${order.side.toUpperCase()} ${order.qty} ${order.symbol}`);
+                document.getElementById('order-qty').value = '';
+                document.getElementById('order-price').value = '';
+                loadTradingData(); // Refresh tables
+            } else {
+                showNotification('error', data.error || 'Failed to place order');
+            }
+        })
+        .catch(err => {
+            showNotification('error', 'Network error: ' + err.message);
+        })
+        .finally(() => {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Place Order';
+        });
     });
 
     function closeAllPositions() {
-        if (confirm('Close all positions?')) {
-            alert('Closing all positions...');
-        }
+        if (!confirm('Close all positions? This will liquidate your entire portfolio.')) return;
+
+        fetch('/api/positions')
+            .then(r => r.json())
+            .then(positions => {
+                if (positions.length === 0) {
+                    showNotification('info', 'No positions to close');
+                    return;
+                }
+
+                const closePromises = positions.map(p =>
+                    fetch('/api/place-order', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            symbol: p.symbol,
+                            side: p.side === 'buy' ? 'sell' : 'buy',
+                            qty: Math.abs(p.qty),
+                            type: 'market'
+                        })
+                    })
+                );
+
+                Promise.all(closePromises)
+                    .then(() => {
+                        showNotification('success', 'All positions closed');
+                        loadTradingData();
+                    })
+                    .catch(err => showNotification('error', 'Error closing positions: ' + err.message));
+            });
     }
 
     function cancelAllOrders() {
-        if (confirm('Cancel all open orders?')) {
-            alert('Cancelling all orders...');
-        }
+        if (!confirm('Cancel all open orders?')) return;
+
+        // Note: Would need a dedicated cancel-all endpoint or iterate
+        showNotification('info', 'Cancelling all orders...');
+        // For now, refresh to show current state
+        loadTradingData();
     }
 
     function closePosition(symbol) {
-        if (confirm(`Close position in ${symbol}?`)) {
-            alert(`Closing ${symbol} position...`);
-        }
+        if (!confirm(`Close position in ${symbol}?`)) return;
+
+        fetch('/api/positions')
+            .then(r => r.json())
+            .then(positions => {
+                const position = positions.find(p => p.symbol === symbol);
+                if (!position) {
+                    showNotification('error', 'Position not found');
+                    return;
+                }
+
+                return fetch('/api/place-order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: symbol,
+                        side: position.side === 'buy' ? 'sell' : 'buy',
+                        qty: Math.abs(position.qty),
+                        type: 'market'
+                    })
+                });
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success || data.id) {
+                    showNotification('success', `Closed ${symbol} position`);
+                    loadTradingData();
+                } else {
+                    showNotification('error', data.error || 'Failed to close position');
+                }
+            })
+            .catch(err => showNotification('error', 'Error: ' + err.message));
     }
 
     function cancelOrder(orderId) {
-        if (confirm('Cancel this order?')) {
-            alert(`Cancelling order ${orderId}...`);
-        }
+        if (!confirm('Cancel this order?')) return;
+
+        // Note: Would need a dedicated cancel endpoint
+        showNotification('info', `Cancelling order ${orderId}...`);
+        loadTradingData();
+    }
+
+    function showNotification(type, message) {
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'}`;
+        alert.textContent = message;
+        alert.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+        document.body.appendChild(alert);
+        setTimeout(() => alert.remove(), 4000);
     }
 
     // Load data

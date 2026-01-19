@@ -526,5 +526,135 @@
             })
             .catch(err => console.error('Failed to load positions:', err));
     }
+
+    // Real-time updates via Server-Sent Events (SSE)
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+
+    function startRealTimeUpdates() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        try {
+            eventSource = new EventSource('/api/stream');
+
+            eventSource.onopen = function() {
+                console.log('SSE connection established');
+                reconnectAttempts = 0;
+                updateConnectionStatus(true);
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleRealtimeUpdate(data);
+                } catch (e) {
+                    console.error('Failed to parse SSE message:', e);
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                console.error('SSE error:', err);
+                updateConnectionStatus(false);
+                eventSource.close();
+
+                // Attempt reconnection with exponential backoff
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    const delay = Math.pow(2, reconnectAttempts) * 1000;
+                    reconnectAttempts++;
+                    console.log(`Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})`);
+                    setTimeout(startRealTimeUpdates, delay);
+                }
+            };
+
+        } catch (e) {
+            console.error('Failed to create EventSource:', e);
+            updateConnectionStatus(false);
+        }
+    }
+
+    function handleRealtimeUpdate(data) {
+        // Update prices
+        if (data.prices) {
+            const priceList = document.getElementById('price-list');
+            if (priceList && Object.keys(data.prices).length > 0) {
+                priceList.innerHTML = Object.entries(data.prices).map(([symbol, price]) => `
+                    <div class="price-item">
+                        <span class="symbol">${symbol}</span>
+                        <span class="price">$${parseFloat(price).toFixed(2)}</span>
+                        <span class="change neutral">-</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Update stats
+        if (data.stats) {
+            const s = data.stats;
+            if (s.current_capital !== undefined) {
+                const portfolioEl = document.getElementById('stat-portfolio');
+                if (portfolioEl) portfolioEl.textContent = '$' + parseFloat(s.current_capital).toLocaleString(undefined, {minimumFractionDigits: 2});
+            }
+            if (s.total_pnl !== undefined) {
+                const pnlEl = document.getElementById('stat-pnl');
+                if (pnlEl) {
+                    const pnl = parseFloat(s.total_pnl);
+                    pnlEl.innerHTML = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} <small>(${parseFloat(s.pnl_percent || 0).toFixed(2)}%)</small>`;
+                    pnlEl.className = `stat-value large ${pnl >= 0 ? 'positive' : 'negative'}`;
+                }
+            }
+            if (s.total_trades !== undefined) {
+                const tradesEl = document.getElementById('stat-trades');
+                if (tradesEl) tradesEl.textContent = s.total_trades;
+            }
+            if (s.win_rate !== undefined) {
+                const winrateEl = document.getElementById('stat-winrate');
+                if (winrateEl) winrateEl.textContent = parseFloat(s.win_rate).toFixed(1) + '%';
+            }
+        }
+
+        // Update system status
+        if (data.is_running !== undefined) {
+            const statusEl = document.getElementById('status-system');
+            if (statusEl) {
+                statusEl.innerHTML = `
+                    <span class="status-dot ${data.is_running ? 'running' : 'stopped'}"></span>
+                    ${data.is_running ? 'Running' : 'Stopped'}
+                `;
+            }
+        }
+
+        // Update recent trades
+        if (data.recent_trades && data.recent_trades.length > 0) {
+            const tradesList = document.getElementById('trades-list');
+            if (tradesList) {
+                tradesList.innerHTML = data.recent_trades.slice(0, 5).map(t => `
+                    <div class="trade-item">
+                        <span class="trade-symbol">${t.symbol}</span>
+                        <span class="trade-side ${t.side === 'buy' ? 'positive' : 'negative'}">${t.side.toUpperCase()}</span>
+                        <span class="trade-qty">${t.qty}</span>
+                        <span class="trade-price">$${parseFloat(t.price).toFixed(2)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+    }
+
+    function updateConnectionStatus(connected) {
+        const badge = document.getElementById('connection-badge');
+        if (badge) {
+            badge.textContent = connected ? 'Live' : 'Offline';
+            badge.className = `badge ${connected ? 'badge-success' : 'badge-warning'}`;
+        }
+    }
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
 </script>
 {% endblock %}

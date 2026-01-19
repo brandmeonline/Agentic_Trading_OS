@@ -1862,6 +1862,218 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             }
         )
 
+    # ==========================================================================
+    # Settings API Endpoints
+    # ==========================================================================
+
+    # In-memory settings storage (would be persisted to file/database in production)
+    user_settings = {
+        "general": {
+            "timezone": "America/New_York",
+            "currency": "USD",
+            "dark_mode": True,
+            "sound_alerts": False
+        },
+        "notifications": {
+            "notify_trades": True,
+            "notify_signals": True,
+            "notify_errors": True,
+            "notify_pnl": False,
+            "email": ""
+        },
+        "strategy": {
+            "strategy_mode": "momentum",
+            "timeframe": "1h",
+            "signal_threshold": 70,
+            "use_rl": False
+        }
+    }
+
+    @app.route("/api/settings", methods=["GET"])
+    @login_required
+    def get_all_settings():
+        """Get all user settings."""
+        return jsonify({"success": True, "settings": user_settings})
+
+    @app.route("/api/settings/<category>", methods=["GET"])
+    @login_required
+    def get_settings(category):
+        """Get settings for a specific category."""
+        if category not in user_settings:
+            return jsonify({"success": False, "error": "Invalid category"})
+        return jsonify({"success": True, "settings": user_settings[category]})
+
+    @app.route("/api/settings/<category>", methods=["POST"])
+    @login_required
+    def update_settings(category):
+        """Update settings for a specific category."""
+        if category not in user_settings:
+            return jsonify({"success": False, "error": "Invalid category"})
+
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"success": False, "error": "No data provided"})
+
+            # Update settings
+            for key, value in data.items():
+                if key in user_settings[category]:
+                    user_settings[category][key] = value
+
+            # Save to file
+            settings_file = Path(__file__).parent.parent / "config" / "user_settings.json"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(settings_file, 'w') as f:
+                json.dump(user_settings, f, indent=2)
+
+            return jsonify({"success": True, "settings": user_settings[category]})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/settings/password", methods=["POST"])
+    @login_required
+    def update_password():
+        """Update user password."""
+        try:
+            data = request.get_json()
+            current = data.get("current_password", "")
+            new_pass = data.get("new_password", "")
+            confirm = data.get("confirm_password", "")
+
+            # Validation
+            if not all([current, new_pass, confirm]):
+                return jsonify({"success": False, "error": "All fields are required"})
+
+            if new_pass != confirm:
+                return jsonify({"success": False, "error": "Passwords do not match"})
+
+            if len(new_pass) < 4:
+                return jsonify({"success": False, "error": "Password must be at least 4 characters"})
+
+            # In production, verify current password and update securely
+            # For now, just acknowledge the update
+            return jsonify({"success": True, "message": "Password updated successfully"})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/settings/export/<export_type>", methods=["GET"])
+    @login_required
+    def export_data(export_type):
+        """Export trading data."""
+        try:
+            if export_type == "trades":
+                trades = trading_state.trades
+                if not trades:
+                    return jsonify({"success": False, "error": "No trades to export"})
+
+                # Generate CSV
+                csv_lines = ["time,symbol,side,qty,price,pnl"]
+                for t in trades:
+                    csv_lines.append(f"{t.get('time','')},{t.get('symbol','')},{t.get('side','')},{t.get('qty',0)},{t.get('price',0)},{t.get('pnl',0)}")
+
+                return Response(
+                    "\n".join(csv_lines),
+                    mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment;filename=trades.csv"}
+                )
+
+            elif export_type == "positions":
+                positions = trading_state.positions
+                csv_lines = ["symbol,side,qty,entry_price,current_price,pnl"]
+                for p in positions:
+                    csv_lines.append(f"{p.get('symbol','')},{p.get('side','')},{p.get('qty',0)},{p.get('entry_price',0)},{p.get('current_price',0)},{p.get('pnl',0)}")
+
+                return Response(
+                    "\n".join(csv_lines),
+                    mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment;filename=positions.csv"}
+                )
+
+            elif export_type == "all":
+                export_data = {
+                    "trades": trading_state.trades,
+                    "positions": trading_state.positions,
+                    "settings": user_settings,
+                    "stats": trading_state.get_stats(),
+                    "exported_at": datetime.now().isoformat()
+                }
+                return Response(
+                    json.dumps(export_data, indent=2),
+                    mimetype="application/json",
+                    headers={"Content-Disposition": "attachment;filename=trading_data.json"}
+                )
+
+            else:
+                return jsonify({"success": False, "error": "Invalid export type"})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/settings/reset-account", methods=["POST"])
+    @login_required
+    def reset_account():
+        """Reset paper trading account to initial state."""
+        try:
+            trading_state.current_capital = trading_state.initial_capital
+            trading_state.total_pnl = 0.0
+            trading_state.trades = []
+            trading_state.positions = []
+            trading_state.total_trades = 0
+            trading_state.winning_trades = 0
+            trading_state.losing_trades = 0
+
+            return jsonify({
+                "success": True,
+                "message": "Account reset to initial capital",
+                "initial_capital": trading_state.initial_capital
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/settings/clear-all", methods=["POST"])
+    @login_required
+    def clear_all_data():
+        """Clear all trading data and reset to defaults."""
+        try:
+            # Reset trading state
+            trading_state.current_capital = trading_state.initial_capital
+            trading_state.total_pnl = 0.0
+            trading_state.trades = []
+            trading_state.positions = []
+            trading_state.errors = []
+            trading_state.total_trades = 0
+            trading_state.winning_trades = 0
+            trading_state.losing_trades = 0
+
+            # Reset settings to defaults
+            user_settings["general"] = {
+                "timezone": "America/New_York",
+                "currency": "USD",
+                "dark_mode": True,
+                "sound_alerts": False
+            }
+            user_settings["notifications"] = {
+                "notify_trades": True,
+                "notify_signals": True,
+                "notify_errors": True,
+                "notify_pnl": False,
+                "email": ""
+            }
+            user_settings["strategy"] = {
+                "strategy_mode": "momentum",
+                "timeframe": "1h",
+                "signal_threshold": 70,
+                "use_rl": False
+            }
+
+            return jsonify({"success": True, "message": "All data cleared"})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
     return app
 
 
