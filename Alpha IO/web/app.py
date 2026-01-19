@@ -89,7 +89,26 @@ class TradingState:
         self.alpaca_api_secret = ""
         self.alpaca_connected = False
 
+        # Alpaca client for live data
+        self.alpaca_client = None
+
+        # Component status
+        self.components: Dict[str, bool] = {
+            "config_manager": False,
+            "credentials": False,
+            "live_data": False,
+            "database": False,
+            "rest_api": False,
+            "exchange_connectors": False,
+            "alpaca_connector": False,
+            "strategies": False,
+            "orchestrator": False,
+            "advanced_rl": False,
+        }
+
         self._lock = threading.Lock()
+        self._price_thread = None
+        self._sync_thread = None
 
     def update_price(self, symbol: str, price: float):
         """Update price for a symbol."""
@@ -179,6 +198,228 @@ class TradingState:
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
             return f"{hours}h {minutes}m"
+
+    def check_components(self):
+        """Check which components are available."""
+        try:
+            from core.config_manager import ConfigManager
+            self.components["config_manager"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.credentials import CredentialsManager
+            self.components["credentials"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.live_data import LiveDataManager
+            self.components["live_data"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.database import DatabaseManager
+            self.components["database"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.rest_api import RESTAPIServer
+            self.components["rest_api"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.exchange_connectors import ExchangeConnector
+            self.components["exchange_connectors"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.alpaca_connector import AlpacaClient
+            self.components["alpaca_connector"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.strategy import Strategy
+            self.components["strategies"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.orchestrator import TradingOrchestrator
+            self.components["orchestrator"] = True
+        except ImportError:
+            pass
+
+        try:
+            from core.advanced_rl import PPOAgent
+            self.components["advanced_rl"] = True
+        except ImportError:
+            pass
+
+    def connect_alpaca(self) -> bool:
+        """Connect to Alpaca API and start fetching prices."""
+        if not self.alpaca_api_key or not self.alpaca_api_secret:
+            return False
+
+        try:
+            from core.alpaca_connector import create_alpaca_client
+            self.alpaca_client = create_alpaca_client(
+                self.alpaca_api_key,
+                self.alpaca_api_secret,
+                paper=True
+            )
+
+            if self.alpaca_client.connect():
+                self.alpaca_connected = True
+                self._start_price_updates()
+                return True
+            else:
+                self.alpaca_connected = False
+                return False
+
+        except Exception as e:
+            self.add_error(f"Alpaca connection failed: {e}", "alpaca")
+            self.alpaca_connected = False
+            return False
+
+    def _start_price_updates(self):
+        """Start background thread for price updates."""
+        if self._price_thread and self._price_thread.is_alive():
+            return
+
+        def update_prices():
+            symbols = ["AAPL", "SPY", "TSLA", "MSFT", "GOOGL"]
+            crypto = ["BTC/USD", "ETH/USD"]
+
+            while self.alpaca_connected:
+                try:
+                    # Fetch stock prices
+                    if self.alpaca_client:
+                        for symbol in symbols:
+                            try:
+                                quote = self.alpaca_client.get_latest_quote(symbol)
+                                if quote:
+                                    price = quote.get("ask_price") or quote.get("bid_price", 0)
+                                    if price:
+                                        self.update_price(symbol, float(price))
+                            except:
+                                pass
+
+                        # Fetch crypto prices
+                        for symbol in crypto:
+                            try:
+                                quote = self.alpaca_client.get_crypto_quote(symbol)
+                                if quote:
+                                    price = quote.get("ask_price") or quote.get("bid_price", 0)
+                                    if price:
+                                        self.update_price(symbol, float(price))
+                            except:
+                                pass
+
+                    self.api_calls += len(symbols) + len(crypto)
+
+                except Exception as e:
+                    self.add_error(f"Price update error: {e}", "prices")
+
+                time.sleep(2)  # Update every 2 seconds
+
+        self._price_thread = threading.Thread(target=update_prices, daemon=True)
+        self._price_thread.start()
+
+    def sync_from_orchestrator(self):
+        """Sync state from the orchestrator."""
+        if not self.orchestrator:
+            return
+
+        try:
+            # Get orchestrator status
+            status = self.orchestrator.get_status()
+
+            with self._lock:
+                self.is_running = status.get("status") == "running"
+                self.current_capital = status.get("capital", {}).get("current", self.current_capital)
+                self.total_pnl = status.get("capital", {}).get("pnl", self.total_pnl)
+                self.total_trades = status.get("trades", {}).get("total", self.total_trades)
+                self.winning_trades = status.get("trades", {}).get("winning", self.winning_trades)
+                self.losing_trades = status.get("trades", {}).get("losing", self.losing_trades)
+
+                # Update prices from orchestrator
+                for symbol, price in status.get("prices", {}).items():
+                    self.prices[symbol] = price
+
+                # Sync positions
+                if hasattr(self.orchestrator, 'state'):
+                    self.positions = dict(self.orchestrator.state.positions)
+
+        except Exception as e:
+            self.add_error(f"Sync error: {e}", "sync")
+
+    def _start_sync_thread(self):
+        """Start background sync with orchestrator."""
+        if self._sync_thread and self._sync_thread.is_alive():
+            return
+
+        def sync_loop():
+            while self.is_running:
+                self.sync_from_orchestrator()
+                time.sleep(1)
+
+        self._sync_thread = threading.Thread(target=sync_loop, daemon=True)
+        self._sync_thread.start()
+
+    def get_account_info(self) -> Dict[str, Any]:
+        """Get Alpaca account info."""
+        if not self.alpaca_client or not self.alpaca_connected:
+            return {}
+
+        try:
+            return self.alpaca_client.get_account()
+        except:
+            return {}
+
+    def get_alpaca_positions(self) -> List[Dict]:
+        """Get positions from Alpaca."""
+        if not self.alpaca_client or not self.alpaca_connected:
+            return []
+
+        try:
+            return self.alpaca_client.get_positions()
+        except:
+            return []
+
+    def place_order(self, symbol: str, qty: int, side: str,
+                    order_type: str = "market", limit_price: float = None) -> Dict:
+        """Place an order via Alpaca."""
+        if not self.alpaca_client or not self.alpaca_connected:
+            return {"success": False, "error": "Not connected to Alpaca"}
+
+        try:
+            if order_type == "market":
+                result = self.alpaca_client.place_market_order(symbol, qty, side)
+            else:
+                result = self.alpaca_client.place_limit_order(symbol, qty, side, limit_price)
+
+            if result:
+                self.add_trade({
+                    "time": datetime.now().isoformat(),
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": qty,
+                    "type": order_type,
+                    "price": limit_price or 0,
+                    "status": "submitted"
+                })
+                return {"success": True, "order": result}
+            else:
+                return {"success": False, "error": "Order failed"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 
 # Global state
@@ -381,6 +622,13 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                         trading_state.initial_capital = capital
                         trading_state.current_capital = capital
                         trading_state.orchestrator.start()
+
+                        # Start syncing from orchestrator
+                        trading_state._start_sync_thread()
+
+                        # Connect to Alpaca for live data if not already connected
+                        if not trading_state.alpaca_connected:
+                            trading_state.connect_alpaca()
                     else:
                         trading_state.add_error("Failed to initialize orchestrator", "start")
 
@@ -450,27 +698,59 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     def api_test_connection():
         """Test Alpaca connection."""
         try:
-            from core.alpaca_connector import create_alpaca_client
-
-            client = create_alpaca_client(
-                trading_state.alpaca_api_key,
-                trading_state.alpaca_api_secret,
-                paper=True
-            )
-
-            if client.connect():
-                account = client.get_account()
-                trading_state.alpaca_connected = True
+            if trading_state.connect_alpaca():
+                account = trading_state.get_account_info()
                 return jsonify({
                     "success": True,
                     "account": account
                 })
             else:
-                trading_state.alpaca_connected = False
                 return jsonify({"success": False, "error": "Connection failed"})
 
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/account")
+    @login_required
+    def api_account():
+        """Get Alpaca account info."""
+        account = trading_state.get_account_info()
+        return jsonify(account)
+
+    @app.route("/api/alpaca-positions")
+    @login_required
+    def api_alpaca_positions():
+        """Get positions from Alpaca."""
+        positions = trading_state.get_alpaca_positions()
+        return jsonify(positions)
+
+    @app.route("/api/place-order", methods=["POST"])
+    @login_required
+    def api_place_order():
+        """Place a trading order."""
+        try:
+            data = request.get_json() or {}
+            symbol = data.get("symbol")
+            qty = int(data.get("qty", 0))
+            side = data.get("side", "buy")
+            order_type = data.get("type", "market")
+            limit_price = data.get("price")
+
+            if not symbol or qty <= 0:
+                return jsonify({"success": False, "error": "Invalid order parameters"})
+
+            result = trading_state.place_order(symbol, qty, side, order_type, limit_price)
+            return jsonify(result)
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/components")
+    @login_required
+    def api_components():
+        """Get component status."""
+        trading_state.check_components()
+        return jsonify(trading_state.components)
 
     # ==========================================================================
     # Server-Sent Events for Real-time Updates
@@ -514,8 +794,23 @@ def load_stored_credentials():
                 trading_state.alpaca_api_key = cred.get("api_key", "")
                 trading_state.alpaca_api_secret = cred.get("api_secret", "")
                 print(f"  Loaded Alpaca credentials from {config_file}")
+
+                # Try to connect to Alpaca
+                if trading_state.alpaca_api_key:
+                    print("  Connecting to Alpaca...")
+                    if trading_state.connect_alpaca():
+                        print("  ✓ Connected to Alpaca")
+                    else:
+                        print("  ⚠ Alpaca connection pending (will connect when network available)")
+
         except Exception as e:
             print(f"  Failed to load credentials: {e}")
+
+    # Check components
+    trading_state.check_components()
+    ready = sum(1 for v in trading_state.components.values() if v)
+    total = len(trading_state.components)
+    print(f"  Components ready: {ready}/{total}")
 
 
 # =============================================================================

@@ -68,7 +68,7 @@
         <div class="card">
             <div class="card-header">
                 <h2>Live Prices</h2>
-                <span class="badge {% if stats.alpaca_connected %}badge-success{% else %}badge-warning{% endif %}">
+                <span class="badge {% if stats.alpaca_connected %}badge-success{% else %}badge-warning{% endif %}" id="connection-badge">
                     {% if stats.alpaca_connected %}Connected{% else %}Offline{% endif %}
                 </span>
             </div>
@@ -83,9 +83,36 @@
                     {% else %}
                     <div class="empty-state">
                         <p>No price data available</p>
-                        <small>Start the system to fetch live prices</small>
+                        <small>Connect to Alpaca in Admin panel</small>
                     </div>
                     {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Account Summary -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Account Summary</h2>
+            </div>
+            <div class="card-body">
+                <div class="account-stats" id="account-stats">
+                    <div class="account-item">
+                        <span class="account-label">Buying Power</span>
+                        <span class="account-value" id="buying-power">$0.00</span>
+                    </div>
+                    <div class="account-item">
+                        <span class="account-label">Cash</span>
+                        <span class="account-value" id="account-cash">$0.00</span>
+                    </div>
+                    <div class="account-item">
+                        <span class="account-label">Day P&L</span>
+                        <span class="account-value" id="day-pnl">$0.00</span>
+                    </div>
+                    <div class="account-item">
+                        <span class="account-label">Status</span>
+                        <span class="account-value" id="account-status">-</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -160,6 +187,68 @@
     document.addEventListener('DOMContentLoaded', function() {
         initPriceChart();
         startRealTimeUpdates();
+        loadAccountInfo();
+        loadPositions();
+
+        // Refresh data periodically
+        setInterval(loadAccountInfo, 5000);
+        setInterval(loadPositions, 3000);
     });
+
+    function loadAccountInfo() {
+        fetch('/api/account')
+            .then(r => r.json())
+            .then(account => {
+                if (account && Object.keys(account).length > 0) {
+                    document.getElementById('buying-power').textContent =
+                        '$' + parseFloat(account.buying_power || 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+                    document.getElementById('account-cash').textContent =
+                        '$' + parseFloat(account.cash || 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+
+                    const dayPnl = parseFloat(account.equity || 0) - parseFloat(account.last_equity || 0);
+                    const dayPnlEl = document.getElementById('day-pnl');
+                    dayPnlEl.textContent = (dayPnl >= 0 ? '+' : '') + '$' + dayPnl.toLocaleString(undefined, {minimumFractionDigits: 2});
+                    dayPnlEl.className = 'account-value ' + (dayPnl >= 0 ? 'positive' : 'negative');
+
+                    document.getElementById('account-status').textContent = account.status || 'Unknown';
+
+                    // Update connection badge
+                    const badge = document.getElementById('connection-badge');
+                    badge.textContent = 'Connected';
+                    badge.className = 'badge badge-success';
+                }
+            })
+            .catch(err => {
+                // Silent fail - account might not be connected
+            });
+    }
+
+    function loadPositions() {
+        fetch('/api/alpaca-positions')
+            .then(r => r.json())
+            .then(positions => {
+                const list = document.getElementById('positions-list');
+                if (!list) return;
+
+                if (positions.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>No open positions</p></div>';
+                    return;
+                }
+
+                list.innerHTML = positions.map(p => {
+                    const pnl = parseFloat(p.unrealized_pl || 0);
+                    const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+                    return `
+                        <div class="position-item">
+                            <div class="position-symbol">${p.symbol}</div>
+                            <div class="position-qty">${p.qty} shares</div>
+                            <div class="position-value">$${parseFloat(p.market_value || 0).toLocaleString()}</div>
+                            <div class="position-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>
+                        </div>
+                    `;
+                }).join('');
+            })
+            .catch(err => console.error('Failed to load positions:', err));
+    }
 </script>
 {% endblock %}

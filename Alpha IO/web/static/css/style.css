@@ -423,6 +423,85 @@ body {
     border-radius: 4px;
 }
 
+/* Account Stats */
+.account-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.account-item {
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.account-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.account-value {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+/* Position Items */
+.position-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.position-symbol {
+    font-weight: 600;
+    min-width: 80px;
+}
+
+.position-qty {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.position-value {
+    font-family: monospace;
+}
+
+.position-pnl {
+    font-weight: 600;
+    min-width: 80px;
+    text-align: right;
+}
+
+/* Error Items */
+.error-item {
+    padding: 10px;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.error-time {
+    color: var(--text-muted);
+    margin-right: 8px;
+}
+
+.error-source {
+    color: var(--warning);
+    margin-right: 8px;
+}
+
+.error-message {
+    color: var(--danger);
+}
+
 /* =============================================================================
    Tables
    ============================================================================= */
