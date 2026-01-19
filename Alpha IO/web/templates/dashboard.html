@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Agentic Trading OS{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <!-- Quick Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon blue">&#128176;</div>
+            <div class="stat-info">
+                <span class="stat-label">Portfolio Value</span>
+                <span class="stat-value large" id="stat-portfolio">${{ "%.2f"|format(stats.current_capital) }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon {% if stats.total_pnl >= 0 %}green{% else %}red{% endif %}">
+                {% if stats.total_pnl >= 0 %}&#9650;{% else %}&#9660;{% endif %}
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">Total P&L</span>
+                <span class="stat-value large {% if stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}" id="stat-pnl">
+                    {% if stats.total_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(stats.total_pnl) }}
+                    <small>({{ "%.2f"|format(stats.pnl_percent) }}%)</small>
+                </span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon purple">&#128202;</div>
+            <div class="stat-info">
+                <span class="stat-label">Total Trades</span>
+                <span class="stat-value large" id="stat-trades">{{ stats.total_trades }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon orange">&#127919;</div>
+            <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value large" id="stat-winrate">{{ "%.1f"|format(stats.win_rate) }}%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="dashboard-grid">
+        <!-- Price Chart -->
+        <div class="card chart-card">
+            <div class="card-header">
+                <h2>Price Chart</h2>
+                <div class="chart-controls">
+                    <select id="chart-symbol">
+                        <option value="AAPL">AAPL</option>
+                        <option value="SPY">SPY</option>
+                        <option value="BTC/USD">BTC/USD</option>
+                    </select>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="priceChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Live Prices -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Live Prices</h2>
+                <span class="badge {% if stats.alpaca_connected %}badge-success{% else %}badge-warning{% endif %}">
+                    {% if stats.alpaca_connected %}Connected{% else %}Offline{% endif %}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="price-list" id="price-list">
+                    {% for symbol, price in stats.prices.items() %}
+                    <div class="price-item">
+                        <span class="symbol">{{ symbol }}</span>
+                        <span class="price">${{ "%.2f"|format(price) }}</span>
+                        <span class="change neutral">-</span>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <p>No price data available</p>
+                        <small>Start the system to fetch live prices</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Open Positions</h2>
+                <span class="badge">{{ stats.positions }}</span>
+            </div>
+            <div class="card-body">
+                <div class="positions-list" id="positions-list">
+                    {% if stats.positions > 0 %}
+                    <!-- Positions will be loaded dynamically -->
+                    {% else %}
+                    <div class="empty-state">
+                        <p>No open positions</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Trades -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Recent Trades</h2>
+                <a href="{{ url_for('trading') }}" class="btn btn-sm">View All</a>
+            </div>
+            <div class="card-body">
+                <div class="trades-list" id="trades-list">
+                    <div class="empty-state">
+                        <p>No trades yet</p>
+                        <small>Trades will appear here when executed</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Status Bar -->
+    <div class="status-bar">
+        <div class="status-item">
+            <span class="status-label">System Status</span>
+            <span class="status-value" id="status-system">
+                <span class="status-dot {% if stats.is_running %}running{% else %}stopped{% endif %}"></span>
+                {% if stats.is_running %}Running{% else %}Stopped{% endif %}
+            </span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Alpaca API</span>
+            <span class="status-value">
+                <span class="status-dot {% if stats.alpaca_connected %}running{% else %}stopped{% endif %}"></span>
+                {% if stats.alpaca_connected %}Connected{% else %}Disconnected{% endif %}
+            </span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Uptime</span>
+            <span class="status-value" id="status-uptime">{{ stats.uptime_formatted }}</span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Errors</span>
+            <span class="status-value {% if stats.errors > 0 %}error{% endif %}">{{ stats.errors }}</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initialize dashboard
+    document.addEventListener('DOMContentLoaded', function() {
+        initPriceChart();
+        startRealTimeUpdates();
+    });
+</script>
+{% endblock %}

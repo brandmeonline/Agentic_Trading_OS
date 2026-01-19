@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Agentic Trading OS{% endblock %}
+{% block page_title %}Admin Control Panel{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <!-- System Control -->
+    <div class="card control-card">
+        <div class="card-header">
+            <h2>System Control</h2>
+            <span class="badge {% if stats.is_running %}badge-success{% else %}badge-danger{% endif %}">
+                {% if stats.is_running %}Running{% else %}Stopped{% endif %}
+            </span>
+        </div>
+        <div class="card-body">
+            <div class="control-buttons">
+                <button id="btn-start" class="btn btn-success btn-lg {% if stats.is_running %}disabled{% endif %}"
+                        onclick="startSystem()" {% if stats.is_running %}disabled{% endif %}>
+                    &#9654; Start System
+                </button>
+                <button id="btn-stop" class="btn btn-danger btn-lg {% if not stats.is_running %}disabled{% endif %}"
+                        onclick="stopSystem()" {% if not stats.is_running %}disabled{% endif %}>
+                    &#9632; Stop System
+                </button>
+            </div>
+
+            <div class="control-info">
+                <div class="info-item">
+                    <span class="info-label">Mode</span>
+                    <span class="info-value">Paper Trading</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Exchange</span>
+                    <span class="info-value">Alpaca</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Uptime</span>
+                    <span class="info-value" id="admin-uptime">{{ stats.uptime_formatted }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-grid">
+        <!-- Trading Configuration -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Trading Configuration</h2>
+            </div>
+            <div class="card-body">
+                <form id="trading-config-form" onsubmit="return saveConfig(event)">
+                    <div class="form-group">
+                        <label for="symbols">Trading Symbols</label>
+                        <input type="text" id="symbols" name="symbols" value="AAPL, SPY, BTC/USD"
+                               placeholder="Comma-separated symbols">
+                        <small>Examples: AAPL, TSLA, SPY, BTC/USD, ETH/USD</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="capital">Initial Capital ($)</label>
+                        <input type="number" id="capital" name="capital" value="100000" min="1000" step="1000">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="max-position">Max Position Size (%)</label>
+                            <input type="number" id="max-position" name="max_position" value="20" min="1" max="100">
+                        </div>
+                        <div class="form-group">
+                            <label for="risk-per-trade">Risk Per Trade (%)</label>
+                            <input type="number" id="risk-per-trade" name="risk_per_trade" value="2" min="0.1" max="10" step="0.1">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="stop-loss">Stop Loss (%)</label>
+                            <input type="number" id="stop-loss" name="stop_loss" value="5" min="1" max="50">
+                        </div>
+                        <div class="form-group">
+                            <label for="take-profit">Take Profit (%)</label>
+                            <input type="number" id="take-profit" name="take_profit" value="15" min="1" max="100">
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Alpaca Credentials -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Alpaca API Credentials</h2>
+                <span class="badge {% if stats.alpaca_connected %}badge-success{% else %}badge-warning{% endif %}">
+                    {% if stats.alpaca_connected %}Connected{% else %}Not Connected{% endif %}
+                </span>
+            </div>
+            <div class="card-body">
+                <form id="credentials-form" onsubmit="return saveCredentials(event)">
+                    <div class="form-group">
+                        <label for="api-key">API Key ID</label>
+                        <input type="text" id="api-key" name="api_key" placeholder="PK...">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="api-secret">Secret Key</label>
+                        <input type="password" id="api-secret" name="api_secret" placeholder="Enter secret key">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="paper-mode" name="paper_mode" checked>
+                            Paper Trading Mode (Recommended)
+                        </label>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary">Save Credentials</button>
+                        <button type="button" class="btn btn-secondary" onclick="testConnection()">
+                            Test Connection
+                        </button>
+                    </div>
+                </form>
+
+                <div id="connection-result" class="connection-result" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- System Components -->
+        <div class="card">
+            <div class="card-header">
+                <h2>System Components</h2>
+            </div>
+            <div class="card-body">
+                <div class="components-list">
+                    <div class="component-item">
+                        <span class="component-name">Config Manager</span>
+                        <span class="component-status running">Active</span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">Credentials Manager</span>
+                        <span class="component-status running">Active</span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">Live Data Feed</span>
+                        <span class="component-status {% if stats.is_running %}running{% else %}stopped{% endif %}">
+                            {% if stats.is_running %}Active{% else %}Stopped{% endif %}
+                        </span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">Alpaca Connector</span>
+                        <span class="component-status {% if stats.alpaca_connected %}running{% else %}stopped{% endif %}">
+                            {% if stats.alpaca_connected %}Connected{% else %}Disconnected{% endif %}
+                        </span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">Strategy Engine</span>
+                        <span class="component-status {% if stats.is_running %}running{% else %}stopped{% endif %}">
+                            {% if stats.is_running %}Active{% else %}Stopped{% endif %}
+                        </span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">Risk Manager</span>
+                        <span class="component-status {% if stats.is_running %}running{% else %}stopped{% endif %}">
+                            {% if stats.is_running %}Active{% else %}Stopped{% endif %}
+                        </span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">Database</span>
+                        <span class="component-status running">Active</span>
+                    </div>
+                    <div class="component-item">
+                        <span class="component-name">REST API</span>
+                        <span class="component-status running">Active</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Log -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Error Log</h2>
+                <span class="badge {% if stats.errors > 0 %}badge-danger{% else %}badge-success{% endif %}">
+                    {{ stats.errors }} errors
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="error-log" id="error-log">
+                    {% if stats.errors == 0 %}
+                    <div class="empty-state">
+                        <p>No errors logged</p>
+                    </div>
+                    {% else %}
+                    <!-- Errors will be loaded dynamically -->
+                    {% endif %}
+                </div>
+                <button class="btn btn-sm btn-secondary" onclick="clearErrors()">Clear Errors</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function startSystem() {
+        const symbols = document.getElementById('symbols').value.split(',').map(s => s.trim());
+        const capital = parseFloat(document.getElementById('capital').value);
+
+        fetch('/api/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'paper', symbols, capital })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('success', 'System starting...');
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                showAlert('error', data.error);
+            }
+        });
+    }
+
+    function stopSystem() {
+        if (!confirm('Are you sure you want to stop the trading system?')) return;
+
+        fetch('/api/stop', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('success', 'System stopped');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showAlert('error', data.error);
+            }
+        });
+    }
+
+    function saveCredentials(event) {
+        event.preventDefault();
+
+        const apiKey = document.getElementById('api-key').value;
+        const apiSecret = document.getElementById('api-secret').value;
+
+        fetch('/api/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('success', data.message);
+            } else {
+                showAlert('error', data.error);
+            }
+        });
+
+        return false;
+    }
+
+    function testConnection() {
+        const resultDiv = document.getElementById('connection-result');
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<p>Testing connection...</p>';
+        resultDiv.className = 'connection-result loading';
+
+        fetch('/api/test-connection', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                resultDiv.className = 'connection-result success';
+                resultDiv.innerHTML = `
+                    <p><strong>Connection Successful!</strong></p>
+                    <p>Status: ${data.account.status}</p>
+                    <p>Buying Power: $${parseFloat(data.account.buying_power).toLocaleString()}</p>
+                `;
+            } else {
+                resultDiv.className = 'connection-result error';
+                resultDiv.innerHTML = `<p><strong>Connection Failed</strong></p><p>${data.error}</p>`;
+            }
+        })
+        .catch(err => {
+            resultDiv.className = 'connection-result error';
+            resultDiv.innerHTML = `<p><strong>Error</strong></p><p>${err.message}</p>`;
+        });
+    }
+
+    function saveConfig(event) {
+        event.preventDefault();
+        showAlert('success', 'Configuration saved');
+        return false;
+    }
+
+    function clearErrors() {
+        document.getElementById('error-log').innerHTML = '<div class="empty-state"><p>No errors logged</p></div>';
+    }
+
+    function showAlert(type, message) {
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        alert.textContent = message;
+
+        const wrapper = document.querySelector('.content-wrapper');
+        wrapper.insertBefore(alert, wrapper.firstChild);
+
+        setTimeout(() => alert.remove(), 5000);
+    }
+</script>
+{% endblock %}

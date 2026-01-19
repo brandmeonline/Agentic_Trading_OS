@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Agentic Trading OS{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="settings-page">
+    <div class="settings-grid">
+        <!-- General Settings -->
+        <div class="card">
+            <div class="card-header">
+                <h2>General Settings</h2>
+            </div>
+            <div class="card-body">
+                <form id="general-settings-form">
+                    <div class="form-group">
+                        <label for="timezone">Timezone</label>
+                        <select id="timezone" name="timezone">
+                            <option value="America/New_York">Eastern (ET)</option>
+                            <option value="America/Chicago">Central (CT)</option>
+                            <option value="America/Denver">Mountain (MT)</option>
+                            <option value="America/Los_Angeles">Pacific (PT)</option>
+                            <option value="UTC">UTC</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="currency">Display Currency</label>
+                        <select id="currency" name="currency">
+                            <option value="USD">USD ($)</option>
+                            <option value="EUR">EUR</option>
+                            <option value="GBP">GBP</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="dark-mode" name="dark_mode" checked>
+                            Dark Mode
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="sound-alerts" name="sound_alerts">
+                            Sound Alerts
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Notification Settings -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Notifications</h2>
+            </div>
+            <div class="card-body">
+                <form id="notification-settings-form">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="notify-trades" name="notify_trades" checked>
+                            Trade Executed
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="notify-signals" name="notify_signals" checked>
+                            New Signals
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="notify-errors" name="notify_errors" checked>
+                            System Errors
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="notify-pnl" name="notify_pnl">
+                            Daily P&L Summary
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email-notifications">Email (optional)</label>
+                        <input type="email" id="email-notifications" name="email" placeholder="your@email.com">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Notifications</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Security Settings -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Security</h2>
+            </div>
+            <div class="card-body">
+                <form id="security-settings-form">
+                    <div class="form-group">
+                        <label for="current-password">Current Password</label>
+                        <input type="password" id="current-password" name="current_password">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="new-password">New Password</label>
+                        <input type="password" id="new-password" name="new_password">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirm-password">Confirm New Password</label>
+                        <input type="password" id="confirm-password" name="confirm_password">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="2fa" name="2fa">
+                            Enable Two-Factor Authentication
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Update Password</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Strategy Settings -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Strategy Settings</h2>
+            </div>
+            <div class="card-body">
+                <form id="strategy-settings-form">
+                    <div class="form-group">
+                        <label for="strategy-mode">Strategy Mode</label>
+                        <select id="strategy-mode" name="strategy_mode">
+                            <option value="momentum">Momentum</option>
+                            <option value="mean_reversion">Mean Reversion</option>
+                            <option value="trend_following">Trend Following</option>
+                            <option value="ensemble">Ensemble (All)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="timeframe">Primary Timeframe</label>
+                        <select id="timeframe" name="timeframe">
+                            <option value="1m">1 Minute</option>
+                            <option value="5m">5 Minutes</option>
+                            <option value="15m">15 Minutes</option>
+                            <option value="1h" selected>1 Hour</option>
+                            <option value="4h">4 Hours</option>
+                            <option value="1d">1 Day</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="signal-threshold">Signal Threshold</label>
+                        <input type="range" id="signal-threshold" name="signal_threshold"
+                               min="0" max="100" value="70">
+                        <span class="range-value">70%</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="use-rl" name="use_rl">
+                            Enable RL Agent (Resource Intensive)
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Strategy Settings</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- API Keys Management -->
+        <div class="card">
+            <div class="card-header">
+                <h2>API Keys</h2>
+            </div>
+            <div class="card-body">
+                <div class="api-keys-list">
+                    <div class="api-key-item">
+                        <div class="api-key-info">
+                            <span class="api-key-name">Alpaca (Paper)</span>
+                            <span class="api-key-preview">CKGG...H6OF</span>
+                        </div>
+                        <div class="api-key-actions">
+                            <span class="badge badge-success">Active</span>
+                            <button class="btn btn-sm btn-secondary">Edit</button>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-secondary" onclick="showAddApiKey()">
+                    + Add API Key
+                </button>
+            </div>
+        </div>
+
+        <!-- Data Export -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Data Export</h2>
+            </div>
+            <div class="card-body">
+                <p>Export your trading data for analysis.</p>
+
+                <div class="export-options">
+                    <button class="btn btn-secondary" onclick="exportData('trades')">
+                        Export Trades (CSV)
+                    </button>
+                    <button class="btn btn-secondary" onclick="exportData('positions')">
+                        Export Positions (CSV)
+                    </button>
+                    <button class="btn btn-secondary" onclick="exportData('all')">
+                        Export All Data (JSON)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="card danger-zone">
+            <div class="card-header">
+                <h2>Danger Zone</h2>
+            </div>
+            <div class="card-body">
+                <div class="danger-item">
+                    <div class="danger-info">
+                        <h4>Reset Paper Trading Account</h4>
+                        <p>Reset your paper trading balance back to initial capital.</p>
+                    </div>
+                    <button class="btn btn-warning" onclick="resetAccount()">Reset Account</button>
+                </div>
+
+                <div class="danger-item">
+                    <div class="danger-info">
+                        <h4>Clear All Data</h4>
+                        <p>Delete all trade history, positions, and settings.</p>
+                    </div>
+                    <button class="btn btn-danger" onclick="clearAllData()">Clear All Data</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Range slider value display
+    document.getElementById('signal-threshold').addEventListener('input', function() {
+        this.nextElementSibling.textContent = this.value + '%';
+    });
+
+    // Form handlers
+    document.querySelectorAll('form').forEach(form => {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            showAlert('success', 'Settings saved successfully');
+        });
+    });
+
+    function showAddApiKey() {
+        alert('Add API Key dialog - Coming soon');
+    }
+
+    function exportData(type) {
+        alert(`Exporting ${type} data...`);
+    }
+
+    function resetAccount() {
+        if (confirm('Are you sure you want to reset your paper trading account? All positions will be closed and balance reset to initial capital.')) {
+            alert('Account reset');
+        }
+    }
+
+    function clearAllData() {
+        if (confirm('WARNING: This will delete ALL your data including trade history, settings, and API keys. This cannot be undone. Are you sure?')) {
+            if (confirm('Please confirm again - delete ALL data?')) {
+                alert('All data cleared');
+            }
+        }
+    }
+
+    function showAlert(type, message) {
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        alert.textContent = message;
+        document.querySelector('.content-wrapper').insertBefore(alert, document.querySelector('.content-wrapper').firstChild);
+        setTimeout(() => alert.remove(), 3000);
+    }
+</script>
+{% endblock %}

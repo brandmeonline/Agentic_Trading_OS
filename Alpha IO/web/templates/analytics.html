@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Agentic Trading OS{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+
+{% block content %}
+<div class="analytics-page">
+    <!-- Performance Overview -->
+    <div class="stats-grid">
+        <div class="stat-card large">
+            <div class="stat-info">
+                <span class="stat-label">Total Return</span>
+                <span class="stat-value xlarge {% if stats.pnl_percent >= 0 %}positive{% else %}negative{% endif %}">
+                    {% if stats.pnl_percent >= 0 %}+{% endif %}{{ "%.2f"|format(stats.pnl_percent) }}%
+                </span>
+                <span class="stat-subtext">${{ "%.2f"|format(stats.total_pnl) }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value large">{{ "%.1f"|format(stats.win_rate) }}%</span>
+                <span class="stat-subtext">{{ stats.winning_trades }}/{{ stats.total_trades }} trades</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Total Trades</span>
+                <span class="stat-value large">{{ stats.total_trades }}</span>
+                <span class="stat-subtext">
+                    <span class="positive">{{ stats.winning_trades }} wins</span> /
+                    <span class="negative">{{ stats.losing_trades }} losses</span>
+                </span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Sharpe Ratio</span>
+                <span class="stat-value large">-</span>
+                <span class="stat-subtext">Calculated daily</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="analytics-grid">
+        <!-- Equity Curve -->
+        <div class="card chart-card wide">
+            <div class="card-header">
+                <h2>Equity Curve</h2>
+                <div class="chart-controls">
+                    <button class="btn btn-sm active" data-period="1d">1D</button>
+                    <button class="btn btn-sm" data-period="1w">1W</button>
+                    <button class="btn btn-sm" data-period="1m">1M</button>
+                    <button class="btn btn-sm" data-period="all">All</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="equityChart" height="300"></canvas>
+            </div>
+        </div>
+
+        <!-- P&L Distribution -->
+        <div class="card">
+            <div class="card-header">
+                <h2>P&L Distribution</h2>
+            </div>
+            <div class="card-body">
+                <canvas id="pnlChart" height="250"></canvas>
+            </div>
+        </div>
+
+        <!-- Trade Distribution -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Trades by Symbol</h2>
+            </div>
+            <div class="card-body">
+                <canvas id="symbolChart" height="250"></canvas>
+            </div>
+        </div>
+
+        <!-- Win/Loss Breakdown -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Win/Loss Analysis</h2>
+            </div>
+            <div class="card-body">
+                <div class="winloss-breakdown">
+                    <div class="wl-item">
+                        <span class="wl-label">Avg Win</span>
+                        <span class="wl-value positive">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Avg Loss</span>
+                        <span class="wl-value negative">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Largest Win</span>
+                        <span class="wl-value positive">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Largest Loss</span>
+                        <span class="wl-value negative">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Profit Factor</span>
+                        <span class="wl-value">-</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Expectancy</span>
+                        <span class="wl-value">$0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drawdown -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Drawdown</h2>
+            </div>
+            <div class="card-body">
+                <canvas id="drawdownChart" height="200"></canvas>
+                <div class="drawdown-stats">
+                    <div class="dd-item">
+                        <span class="dd-label">Max Drawdown</span>
+                        <span class="dd-value negative">0.00%</span>
+                    </div>
+                    <div class="dd-item">
+                        <span class="dd-label">Current Drawdown</span>
+                        <span class="dd-value">0.00%</span>
+                    </div>
+                    <div class="dd-item">
+                        <span class="dd-label">Recovery Time</span>
+                        <span class="dd-value">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Monthly Returns -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Monthly Returns</h2>
+            </div>
+            <div class="card-body">
+                <div class="monthly-returns">
+                    <div class="month-item">
+                        <span class="month-name">Jan</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Feb</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Mar</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Apr</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">May</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Jun</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initialize charts
+    document.addEventListener('DOMContentLoaded', function() {
+        initEquityChart();
+        initPnlChart();
+        initSymbolChart();
+        initDrawdownChart();
+    });
+
+    function initEquityChart() {
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['Start', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5'],
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: [100000, 100000, 100000, 100000, 100000, 100000],
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    function initPnlChart() {
+        const ctx = document.getElementById('pnlChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['<-5%', '-5 to -2%', '-2 to 0%', '0 to 2%', '2 to 5%', '>5%'],
+                datasets: [{
+                    label: 'Trade Count',
+                    data: [0, 0, 0, 0, 0, 0],
+                    backgroundColor: ['#ef4444', '#f97316', '#fbbf24', '#84cc16', '#22c55e', '#10b981']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { grid: { color: 'rgba(255,255,255,0.05)' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    function initSymbolChart() {
+        const ctx = document.getElementById('symbolChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['AAPL', 'SPY', 'BTC/USD'],
+                datasets: [{
+                    data: [33, 33, 34],
+                    backgroundColor: ['#6366f1', '#8b5cf6', '#a855f7']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' }
+                }
+            }
+        });
+    }
+
+    function initDrawdownChart() {
+        const ctx = document.getElementById('drawdownChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['Start', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5'],
+                datasets: [{
+                    label: 'Drawdown',
+                    data: [0, 0, 0, 0, 0, 0],
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        reverse: true,
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+</script>
+{% endblock %}

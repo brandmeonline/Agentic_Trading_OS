@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+
+{% block title %}Trading - Agentic Trading OS{% endblock %}
+{% block page_title %}Trading{% endblock %}
+
+{% block content %}
+<div class="trading-page">
+    <!-- Quick Actions -->
+    <div class="quick-actions">
+        <div class="action-card">
+            <h3>Manual Order</h3>
+            <form id="manual-order-form" class="order-form">
+                <div class="form-row">
+                    <select id="order-symbol" name="symbol">
+                        <option value="AAPL">AAPL</option>
+                        <option value="SPY">SPY</option>
+                        <option value="TSLA">TSLA</option>
+                        <option value="BTC/USD">BTC/USD</option>
+                        <option value="ETH/USD">ETH/USD</option>
+                    </select>
+                    <select id="order-side" name="side">
+                        <option value="buy">Buy</option>
+                        <option value="sell">Sell</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <input type="number" id="order-qty" name="qty" placeholder="Quantity" min="1">
+                    <select id="order-type" name="type">
+                        <option value="market">Market</option>
+                        <option value="limit">Limit</option>
+                    </select>
+                </div>
+                <div class="form-row limit-price" style="display: none;">
+                    <input type="number" id="order-price" name="price" placeholder="Limit Price" step="0.01">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Place Order</button>
+            </form>
+        </div>
+
+        <div class="action-card">
+            <h3>Quick Stats</h3>
+            <div class="quick-stats">
+                <div class="qs-item">
+                    <span class="qs-value" id="qs-buying-power">$100,000.00</span>
+                    <span class="qs-label">Buying Power</span>
+                </div>
+                <div class="qs-item">
+                    <span class="qs-value" id="qs-positions">{{ stats.positions }}</span>
+                    <span class="qs-label">Open Positions</span>
+                </div>
+                <div class="qs-item">
+                    <span class="qs-value" id="qs-day-pnl">$0.00</span>
+                    <span class="qs-label">Day P&L</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Positions Table -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Open Positions</h2>
+            <button class="btn btn-sm btn-danger" onclick="closeAllPositions()">Close All</button>
+        </div>
+        <div class="card-body">
+            <table class="data-table" id="positions-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Qty</th>
+                        <th>Entry Price</th>
+                        <th>Current Price</th>
+                        <th>P&L</th>
+                        <th>P&L %</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="positions-tbody">
+                    <tr class="empty-row">
+                        <td colspan="8">No open positions</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Open Orders -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Open Orders</h2>
+            <button class="btn btn-sm btn-secondary" onclick="cancelAllOrders()">Cancel All</button>
+        </div>
+        <div class="card-body">
+            <table class="data-table" id="orders-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Type</th>
+                        <th>Qty</th>
+                        <th>Price</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="orders-tbody">
+                    <tr class="empty-row">
+                        <td colspan="8">No open orders</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Trade History -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Trade History</h2>
+            <div class="filter-controls">
+                <select id="trade-filter-symbol">
+                    <option value="">All Symbols</option>
+                    <option value="AAPL">AAPL</option>
+                    <option value="SPY">SPY</option>
+                    <option value="BTC/USD">BTC/USD</option>
+                </select>
+                <select id="trade-filter-side">
+                    <option value="">All Sides</option>
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-body">
+            <table class="data-table" id="trades-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Qty</th>
+                        <th>Price</th>
+                        <th>Value</th>
+                        <th>P&L</th>
+                    </tr>
+                </thead>
+                <tbody id="trades-tbody">
+                    <tr class="empty-row">
+                        <td colspan="7">No trades yet</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Show/hide limit price field
+    document.getElementById('order-type').addEventListener('change', function() {
+        const limitPrice = document.querySelector('.limit-price');
+        limitPrice.style.display = this.value === 'limit' ? 'flex' : 'none';
+    });
+
+    // Manual order form
+    document.getElementById('manual-order-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const order = {
+            symbol: document.getElementById('order-symbol').value,
+            side: document.getElementById('order-side').value,
+            qty: parseInt(document.getElementById('order-qty').value),
+            type: document.getElementById('order-type').value,
+            price: parseFloat(document.getElementById('order-price').value) || null
+        };
+
+        // Placeholder - would call API
+        alert('Order placed: ' + JSON.stringify(order));
+    });
+
+    function closeAllPositions() {
+        if (confirm('Close all positions?')) {
+            alert('Closing all positions...');
+        }
+    }
+
+    function cancelAllOrders() {
+        if (confirm('Cancel all open orders?')) {
+            alert('Cancelling all orders...');
+        }
+    }
+
+    function closePosition(symbol) {
+        if (confirm(`Close position in ${symbol}?`)) {
+            alert(`Closing ${symbol} position...`);
+        }
+    }
+
+    function cancelOrder(orderId) {
+        if (confirm('Cancel this order?')) {
+            alert(`Cancelling order ${orderId}...`);
+        }
+    }
+
+    // Load data
+    function loadTradingData() {
+        fetch('/api/positions')
+            .then(r => r.json())
+            .then(positions => updatePositionsTable(positions));
+
+        fetch('/api/orders')
+            .then(r => r.json())
+            .then(orders => updateOrdersTable(orders));
+
+        fetch('/api/trades?limit=50')
+            .then(r => r.json())
+            .then(trades => updateTradesTable(trades));
+    }
+
+    function updatePositionsTable(positions) {
+        const tbody = document.getElementById('positions-tbody');
+
+        if (positions.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No open positions</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = positions.map(p => `
+            <tr>
+                <td><strong>${p.symbol}</strong></td>
+                <td class="${p.side === 'buy' ? 'positive' : 'negative'}">${p.side.toUpperCase()}</td>
+                <td>${p.qty}</td>
+                <td>$${p.entry_price.toFixed(2)}</td>
+                <td>$${p.current_price.toFixed(2)}</td>
+                <td class="${p.pnl >= 0 ? 'positive' : 'negative'}">$${p.pnl.toFixed(2)}</td>
+                <td class="${p.pnl_pct >= 0 ? 'positive' : 'negative'}">${p.pnl_pct.toFixed(2)}%</td>
+                <td><button class="btn btn-sm btn-danger" onclick="closePosition('${p.symbol}')">Close</button></td>
+            </tr>
+        `).join('');
+    }
+
+    function updateOrdersTable(orders) {
+        const tbody = document.getElementById('orders-tbody');
+
+        if (orders.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No open orders</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = orders.map(o => `
+            <tr>
+                <td>${o.time}</td>
+                <td><strong>${o.symbol}</strong></td>
+                <td class="${o.side === 'buy' ? 'positive' : 'negative'}">${o.side.toUpperCase()}</td>
+                <td>${o.type}</td>
+                <td>${o.qty}</td>
+                <td>${o.price ? '$' + o.price.toFixed(2) : 'Market'}</td>
+                <td><span class="badge badge-${o.status}">${o.status}</span></td>
+                <td><button class="btn btn-sm btn-secondary" onclick="cancelOrder('${o.id}')">Cancel</button></td>
+            </tr>
+        `).join('');
+    }
+
+    function updateTradesTable(trades) {
+        const tbody = document.getElementById('trades-tbody');
+
+        if (trades.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No trades yet</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = trades.map(t => `
+            <tr>
+                <td>${t.time}</td>
+                <td><strong>${t.symbol}</strong></td>
+                <td class="${t.side === 'buy' ? 'positive' : 'negative'}">${t.side.toUpperCase()}</td>
+                <td>${t.qty}</td>
+                <td>$${t.price.toFixed(2)}</td>
+                <td>$${(t.qty * t.price).toFixed(2)}</td>
+                <td class="${t.pnl >= 0 ? 'positive' : 'negative'}">$${t.pnl.toFixed(2)}</td>
+            </tr>
+        `).join('');
+    }
+
+    // Initial load
+    loadTradingData();
+
+    // Refresh every 5 seconds
+    setInterval(loadTradingData, 5000);
+</script>
+{% endblock %}
