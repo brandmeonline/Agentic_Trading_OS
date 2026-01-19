@@ -1,7 +1,42 @@
 """
 Agentic Trading OS - Web Dashboard.
 
-A modern, interactive web interface for the trading system.
+A comprehensive Flask-based web interface for the algorithmic trading platform.
+
+Features:
+---------
+- Real-time portfolio dashboard with SSE streaming
+- Trading interface with manual order placement
+- Advanced analytics (equity curves, drawdowns, Monte Carlo)
+- Alert system with multi-channel notifications
+- Strategy marketplace and copy trading
+- AI-powered trading assistant
+- DeFi integration and blockchain support
+
+API Structure:
+--------------
+The application exposes 78 REST API endpoints organized by category:
+- /api/stats, /api/positions, /api/trades - Core trading
+- /api/alerts/* - Alert management
+- /api/indicators/* - Technical indicators
+- /api/marketplace/* - Strategy marketplace
+- /api/ai/* - AI assistant
+- /api/blockchain/* - DeFi integration
+- /api/analytics/* - Advanced analytics
+- /api/settings/* - User preferences
+
+Authentication:
+---------------
+All API endpoints (except /login) require session authentication.
+Use the @login_required decorator for protected routes.
+
+Usage:
+------
+    from web.app import run_server
+    run_server(host='0.0.0.0', port=5000, debug=True)
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations

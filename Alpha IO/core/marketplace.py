@@ -1,11 +1,74 @@
 """
 Agentic Trading OS - Strategy Marketplace.
 
-Social trading features:
-- Strategy sharing and discovery
-- Copy trading
-- Leaderboards and rankings
-- Signal marketplace
+A comprehensive social trading platform enabling strategy sharing, copy trading,
+and community-driven trading insights.
+
+Features:
+---------
+
+**Strategy Marketplace:**
+- Create and publish trading strategies
+- Browse and discover strategies by category
+- Rating and review system (1-5 stars)
+- Performance tracking (return, Sharpe, drawdown)
+- Follow/unfollow strategies
+- Category filters (momentum, mean_reversion, arbitrage, etc.)
+
+**Copy Trading:**
+- Automatically copy trades from top performers
+- Configurable allocation percentage (1-100%)
+- Risk limits (max trade size, daily loss limit)
+- Stop loss per copied position
+- Real-time trade replication
+- Performance attribution
+
+**Leaderboards:**
+- Rank traders by total return, win rate, Sharpe ratio
+- Time-based filters (daily, weekly, monthly, all-time)
+- Detailed performance metrics per trader
+- Historical performance charts
+
+**Signal Marketplace:**
+- Buy/sell signal subscriptions
+- Real-time signal delivery
+- Signal performance tracking
+- Free and premium tiers
+
+Usage:
+------
+    from core.marketplace import get_strategy_marketplace
+
+    marketplace = get_strategy_marketplace()
+
+    # Create a strategy
+    strategy_id = marketplace.create_strategy(
+        name="Momentum Alpha",
+        description="High-frequency momentum strategy",
+        author_id="user_123",
+        category="momentum"
+    )
+
+    # Setup copy trading
+    marketplace.setup_copy_trading(
+        copier_id="user_456",
+        leader_id="user_123",
+        allocation_percent=10.0
+    )
+
+    # Get leaderboard
+    leaders = marketplace.get_leaderboard(sort_by="total_return", limit=50)
+
+API Integration:
+----------------
+- GET /api/marketplace/strategies - List strategies
+- POST /api/marketplace/strategies - Create strategy
+- GET /api/leaderboard - Get trader rankings
+- POST /api/copy-trading/setup - Setup copy trading
+- GET /api/signals - Get trading signals
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations

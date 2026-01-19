@@ -1,11 +1,55 @@
 """
 Agentic Trading OS - Technical Indicators.
 
-Comprehensive technical analysis indicators for charting:
-- Trend: SMA, EMA, MACD, ADX
-- Momentum: RSI, Stochastic, CCI, Williams %R
-- Volatility: Bollinger Bands, ATR, Keltner Channels
-- Volume: OBV, VWAP, Volume Profile
+A comprehensive library of 13 technical analysis indicators for charting and
+signal generation.
+
+Indicators by Category:
+-----------------------
+
+**Trend Indicators:**
+- SMA (Simple Moving Average) - Basic trend following
+- EMA (Exponential Moving Average) - Weighted recent prices more
+- MACD (Moving Average Convergence Divergence) - Trend momentum
+
+**Momentum Indicators:**
+- RSI (Relative Strength Index) - Overbought/oversold conditions
+- Stochastic Oscillator - Price position within range
+- Williams %R - Momentum oscillator
+- CCI (Commodity Channel Index) - Deviation from average
+
+**Volatility Indicators:**
+- Bollinger Bands - Price volatility channels
+- ATR (Average True Range) - Market volatility measure
+- Parabolic SAR - Trend reversal points
+
+**Volume Indicators:**
+- OBV (On-Balance Volume) - Volume-price confirmation
+- VWAP (Volume Weighted Average Price) - Fair value
+
+**Composite:**
+- Ichimoku Cloud - Multi-component trend system
+
+Usage:
+------
+    from core.indicators import get_indicator_calculator
+
+    calc = get_indicator_calculator()
+    rsi_values = calc.calculate('rsi', prices, period=14)
+    macd_result = calc.calculate('macd', prices, fast=12, slow=26, signal=9)
+
+Each indicator function accepts a list of prices and returns calculated values.
+None values are used for periods where insufficient data exists.
+
+API Integration:
+----------------
+These indicators are exposed via:
+- GET /api/indicators - List available indicators
+- POST /api/indicators/calculate - Calculate specific indicator
+- GET /api/indicators/chart/<symbol> - Get chart with overlays
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations

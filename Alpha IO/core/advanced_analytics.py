@@ -1,14 +1,89 @@
 """
 Agentic Trading OS - Advanced Analytics.
 
-Next-generation analytics with:
-- Monte Carlo simulations
-- Modern Portfolio Theory optimization
-- Factor analysis
-- Risk decomposition (VaR, CVaR, Sortino)
-- Correlation analysis
-- Scenario analysis
-- Machine learning predictions
+Institutional-grade portfolio analytics providing Monte Carlo simulations,
+portfolio optimization, risk metrics, and scenario analysis.
+
+Components:
+-----------
+
+**MonteCarloSimulator:**
+Run probabilistic portfolio projections with 1,000-100,000 simulation paths.
+- Geometric Brownian Motion price paths
+- Configurable time horizons (days to years)
+- Percentile distributions (5th, 25th, 50th, 75th, 95th)
+- Probability of loss calculations
+- Maximum drawdown distributions
+
+**PortfolioOptimizer:**
+Modern Portfolio Theory (Markowitz) optimization.
+- Efficient frontier calculation
+- Maximum Sharpe ratio portfolio
+- Minimum variance portfolio
+- Target return optimization
+- Configurable weight constraints
+- Risk-free rate adjustments
+
+**RiskAnalyzer:**
+Comprehensive risk metrics calculation.
+- Value at Risk (VaR) - 95% and 99% confidence
+- Conditional VaR (CVaR/Expected Shortfall)
+- Sortino Ratio (downside deviation)
+- Calmar Ratio (return/max drawdown)
+- Sharpe Ratio
+- Maximum Drawdown
+- Volatility (daily and annualized)
+
+**ScenarioAnalyzer:**
+Stress testing with predefined and custom scenarios.
+- Market crash (-50% equities, -70% crypto)
+- Recession (gradual decline)
+- Inflation spike
+- Crypto winter (-80% crypto)
+- Black swan events
+- Custom scenario builder
+
+Usage:
+------
+    from core.advanced_analytics import (
+        MonteCarloSimulator,
+        PortfolioOptimizer,
+        RiskAnalyzer,
+        ScenarioAnalyzer
+    )
+
+    # Monte Carlo simulation
+    simulator = MonteCarloSimulator()
+    result = simulator.simulate_portfolio(
+        initial_value=100000,
+        expected_return=0.12,
+        volatility=0.20,
+        time_horizon_days=252,
+        num_simulations=10000
+    )
+
+    # Portfolio optimization
+    optimizer = PortfolioOptimizer()
+    optimal = optimizer.optimize_portfolio(
+        assets=["AAPL", "GOOGL", "MSFT"],
+        expected_returns=[0.15, 0.12, 0.14],
+        covariance_matrix=cov_matrix,
+        target="max_sharpe"
+    )
+
+    # Risk analysis
+    analyzer = RiskAnalyzer()
+    metrics = analyzer.calculate_risk_metrics(returns_list)
+
+API Integration:
+----------------
+- POST /api/analytics/monte-carlo - Run Monte Carlo simulation
+- POST /api/analytics/optimize - Portfolio optimization
+- POST /api/analytics/scenarios - Scenario analysis
+- POST /api/analytics/risk - Calculate risk metrics
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations

@@ -1,13 +1,72 @@
 """
 Agentic Trading OS - Alert & Notification System.
 
-Comprehensive alerting with:
-- Price alerts (above/below/cross)
-- Technical indicator alerts
-- Trade execution notifications
-- Webhook support (Discord, Slack, Telegram, custom)
-- Email notifications
-- In-app notifications
+A robust alert and notification system supporting multiple channels and
+conditions for real-time trading notifications.
+
+Alert Types:
+------------
+**Price Alerts:**
+- PRICE_ABOVE - Triggers when price exceeds threshold
+- PRICE_BELOW - Triggers when price drops below threshold
+- PRICE_CROSS - Triggers on crossing a price level
+- PERCENT_CHANGE - Triggers on percentage movement
+
+**Technical Alerts:**
+- RSI_OVERBOUGHT - RSI exceeds 70
+- RSI_OVERSOLD - RSI drops below 30
+- MACD_CROSS - MACD line crosses signal line
+- VOLUME_SPIKE - Volume exceeds average by threshold
+
+**Trade Alerts:**
+- TRADE_EXECUTED - Order filled notification
+- POSITION_OPENED - New position opened
+- POSITION_CLOSED - Position closed
+- STOP_LOSS_HIT - Stop loss triggered
+- TAKE_PROFIT_HIT - Take profit reached
+
+Notification Channels:
+----------------------
+- IN_APP - Web dashboard notifications
+- EMAIL - SMTP email delivery
+- DISCORD - Discord webhook integration
+- SLACK - Slack webhook integration
+- TELEGRAM - Telegram Bot API
+- WEBHOOK - Custom HTTP webhooks
+
+Usage:
+------
+    from core.alerts import get_alert_manager
+
+    manager = get_alert_manager()
+
+    # Create a price alert
+    alert_id = manager.create_alert(
+        name="AAPL Alert",
+        symbol="AAPL",
+        condition=AlertCondition(
+            alert_type=AlertType.PRICE_ABOVE,
+            symbol="AAPL",
+            value=200.0
+        ),
+        channels=[AlertChannel.DISCORD, AlertChannel.EMAIL],
+        message="AAPL has reached $200!"
+    )
+
+    # Check alerts against current prices
+    manager.check_alerts({"AAPL": 201.50})
+
+API Integration:
+----------------
+- GET /api/alerts - List all alerts
+- POST /api/alerts - Create new alert
+- DELETE /api/alerts/<id> - Remove alert
+- POST /api/alerts/<id>/enable - Enable alert
+- POST /api/alerts/<id>/disable - Disable alert
+- GET /api/notifications - Get notification history
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations

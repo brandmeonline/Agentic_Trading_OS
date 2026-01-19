@@ -1,13 +1,68 @@
 """
 Agentic Trading OS - AI Trading Assistant.
 
-Next-generation AI-powered trading assistant with:
-- Natural language interface for trading commands
-- Market analysis and insights
-- Portfolio recommendations
-- Risk assessment
-- Sentiment analysis integration
-- Autonomous trading suggestions
+An intelligent natural language trading assistant that understands trading
+commands, provides market analysis, and executes trades via conversational
+interface.
+
+Intent Classification:
+----------------------
+The assistant recognizes 9 intent types:
+- TRADE - Buy/sell commands ("Buy 10 AAPL", "Sell my GOOGL position")
+- ANALYSIS - Technical analysis requests ("Analyze BTC", "What's the trend on SPY?")
+- PORTFOLIO - Portfolio queries ("What's my P&L?", "Show my positions")
+- PRICE - Price inquiries ("Price of ETH", "How much is TSLA?")
+- ALERT - Alert setup ("Alert me when AAPL hits $200")
+- STRATEGY - Strategy questions ("What strategies are trending?")
+- RISK - Risk assessment ("What's my risk exposure?")
+- NEWS - Market news ("Any news on NVDA?")
+- HELP - Help requests ("How do I place an order?")
+
+Entity Extraction:
+------------------
+The NLP processor extracts:
+- Symbol - Stock/crypto tickers (AAPL, BTC, ETH)
+- Quantity - Number of shares/units
+- Price - Target/limit prices
+- Action - Buy, sell, hold
+- Timeframe - Day, week, month
+
+Example Commands:
+-----------------
+- "Buy 10 shares of AAPL" → Executes market buy order
+- "Sell 50% of my TSLA" → Sells half the position
+- "Analyze Bitcoin" → Returns technical analysis
+- "What's my total P&L?" → Shows portfolio performance
+- "Set alert for ETH above 4000" → Creates price alert
+
+Architecture:
+-------------
+1. NLPProcessor - Parses natural language into ParsedCommand
+2. MarketAnalyzer - Performs technical and sentiment analysis
+3. AITradingAssistant - Orchestrates commands and responses
+
+Usage:
+------
+    from core.ai_assistant import get_ai_assistant
+
+    assistant = get_ai_assistant()
+
+    # Process a natural language command
+    response = assistant.process_message(
+        message="Buy 10 shares of Apple",
+        session_id="user_session_123"
+    )
+
+    print(response.message)  # "Executed: BUY 10 AAPL at market price"
+    print(response.action_taken)  # Order details
+
+API Integration:
+----------------
+- POST /api/ai/chat - Send message to AI assistant
+- GET /api/ai/analyze/<symbol> - Get AI analysis for symbol
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations

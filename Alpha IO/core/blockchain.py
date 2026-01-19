@@ -1,14 +1,105 @@
 """
 Agentic Trading OS - Blockchain & DeFi Integration.
 
-Next-generation multi-chain support with:
-- Multi-chain wallet management (EVM, Solana, Cosmos)
-- DEX aggregation (Uniswap, SushiSwap, 1inch)
-- DeFi yield farming dashboard
-- NFT portfolio tracking
-- Cross-chain bridging
-- Smart contract interaction
-- Gas optimization
+A comprehensive multi-chain DeFi integration layer supporting trading, yield
+farming, and cross-chain operations across major blockchain networks.
+
+Supported Blockchains:
+----------------------
+**EVM Chains:**
+- Ethereum (Chain ID: 1) - Main network
+- Polygon (Chain ID: 137) - Low-cost L2
+- Arbitrum (Chain ID: 42161) - Optimistic rollup
+- Optimism (Chain ID: 10) - Optimistic rollup
+- Base (Chain ID: 8453) - Coinbase L2
+- Avalanche (Chain ID: 43114) - Fast finality
+- BNB Chain (Chain ID: 56) - Binance ecosystem
+
+**Non-EVM:**
+- Solana - High-throughput
+- Cosmos - Inter-blockchain communication
+
+Components:
+-----------
+
+**BlockchainManager:**
+Multi-chain wallet and portfolio management.
+- Aggregate balances across chains
+- Token price tracking
+- Portfolio value calculation
+- Chain health monitoring
+
+**DEXAggregator:**
+Best-price routing across decentralized exchanges.
+- 1inch Protocol integration
+- Paraswap integration
+- 0x Protocol integration
+- Kyber Network integration
+- Slippage protection
+- Gas estimation
+
+**BridgeAggregator:**
+Cross-chain asset transfers.
+- Stargate Finance
+- Hop Protocol
+- Across Protocol
+- Celer Network
+- Fee comparison
+- Route optimization
+
+**YieldOptimizer:**
+DeFi yield farming opportunities.
+- Protocol discovery (Aave, Compound, Curve, etc.)
+- APY comparison across chains
+- Risk assessment (impermanent loss, smart contract risk)
+- Auto-compound suggestions
+- TVL tracking
+
+**GasTracker:**
+Real-time gas price monitoring.
+- Multi-tier estimates (slow, standard, fast, instant)
+- EIP-1559 support (base fee + priority fee)
+- Historical gas trends
+- Optimal timing suggestions
+
+Usage:
+------
+    from core.blockchain import get_blockchain_manager
+
+    manager = get_blockchain_manager()
+
+    # Get portfolio across all chains
+    portfolio = manager.get_portfolio_summary()
+
+    # Get DEX swap quote
+    quotes = manager.dex.get_quote(
+        from_token="ETH",
+        to_token="USDC",
+        amount=1.0,
+        chain="ethereum"
+    )
+
+    # Find yield opportunities
+    opportunities = manager.yield_optimizer.find_opportunities(
+        token="USDC",
+        min_apy=5.0,
+        max_risk="medium"
+    )
+
+    # Get gas prices
+    gas = manager.gas_tracker.get_gas_prices("ethereum")
+
+API Integration:
+----------------
+- GET /api/blockchain/portfolio - Portfolio summary
+- GET /api/blockchain/chains - Supported chains
+- GET /api/blockchain/defi - DeFi overview
+- POST /api/blockchain/swap/quote - Get swap quotes
+- GET /api/blockchain/yield/opportunities - Yield opportunities
+- GET /api/blockchain/gas/<chain> - Gas prices
+
+Author: Agentic Trading OS Team
+Version: 2.0
 """
 
 from __future__ import annotations
