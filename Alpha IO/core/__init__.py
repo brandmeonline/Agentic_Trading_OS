@@ -396,3 +396,38 @@ try:
 except ImportError:
     ConfigManager = None
     create_config_manager = None
+
+# Credentials Manager
+try:
+    from core.credentials import (
+        CredentialsManager, Credential, CredentialConfig,
+        get_credentials_manager, create_credentials_manager,
+        get_testnet_endpoint, get_public_endpoint,
+        TESTNET_ENDPOINTS, PUBLIC_ENDPOINTS
+    )
+    __all__.extend([
+        "CredentialsManager", "Credential", "CredentialConfig",
+        "get_credentials_manager", "create_credentials_manager",
+        "get_testnet_endpoint", "get_public_endpoint",
+        "TESTNET_ENDPOINTS", "PUBLIC_ENDPOINTS"
+    ])
+except ImportError:
+    CredentialsManager = None
+    get_credentials_manager = None
+
+# Live Data Client
+try:
+    from core.live_data import (
+        LiveDataManager, BinancePublicClient, CoinGeckoClient,
+        HTTPClient, LiveDataConfig, MarketTick, OHLCV,
+        create_live_data_manager, create_binance_client, create_coingecko_client
+    )
+    __all__.extend([
+        "LiveDataManager", "BinancePublicClient", "CoinGeckoClient",
+        "HTTPClient", "LiveDataConfig", "MarketTick", "OHLCV",
+        "create_live_data_manager", "create_binance_client", "create_coingecko_client"
+    ])
+except ImportError:
+    LiveDataManager = None
+    BinancePublicClient = None
+    CoinGeckoClient = None
