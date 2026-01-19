@@ -1470,6 +1470,376 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             return jsonify({"success": False, "error": str(e)})
 
     # ==========================================================================
+    # Routes - AI Assistant
+    # ==========================================================================
+
+    @app.route("/ai-assistant")
+    @login_required
+    def ai_assistant():
+        """AI Assistant chat interface."""
+        return render_template("ai_assistant.html", stats=trading_state.get_stats())
+
+    @app.route("/api/ai/chat", methods=["POST"])
+    @login_required
+    def api_ai_chat():
+        """Send message to AI assistant."""
+        try:
+            from core.ai_assistant import get_ai_assistant
+            assistant = get_ai_assistant()
+
+            data = request.get_json() or {}
+            message = data.get("message", "")
+            session_id = data.get("session_id", session.get("username", "default"))
+
+            if not message:
+                return jsonify({"success": False, "error": "Message required"})
+
+            response = assistant.process_message(message, session_id)
+
+            return jsonify({
+                "success": True,
+                "response": {
+                    "message": response.message,
+                    "data": response.data,
+                    "suggestions": response.suggestions,
+                    "actions": response.actions,
+                    "confidence": response.confidence,
+                    "timestamp": response.timestamp
+                }
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/ai/analyze/<symbol>")
+    @login_required
+    def api_ai_analyze(symbol):
+        """Get AI analysis for a symbol."""
+        try:
+            from core.ai_assistant import get_ai_assistant
+            assistant = get_ai_assistant()
+
+            # Get price history if available
+            history = trading_state.price_history.get(symbol, [])
+            prices = [h["price"] for h in history] if history else None
+
+            analysis = assistant.analyzer.analyze_symbol(symbol, prices)
+
+            return jsonify({
+                "success": True,
+                "analysis": analysis
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
+    # Routes - Blockchain / DeFi
+    # ==========================================================================
+
+    @app.route("/defi")
+    @login_required
+    def defi_dashboard():
+        """DeFi dashboard page."""
+        return render_template("defi.html", stats=trading_state.get_stats())
+
+    @app.route("/api/blockchain/portfolio")
+    @login_required
+    def api_blockchain_portfolio():
+        """Get blockchain portfolio summary."""
+        try:
+            from core.blockchain import get_blockchain_manager
+            manager = get_blockchain_manager()
+            summary = manager.get_portfolio_summary()
+            return jsonify({"success": True, "portfolio": summary})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/blockchain/chains")
+    @login_required
+    def api_blockchain_chains():
+        """Get supported blockchain chains."""
+        try:
+            from core.blockchain import get_blockchain_manager
+            manager = get_blockchain_manager()
+            chains = manager.get_supported_chains()
+            return jsonify({"success": True, "chains": chains})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/blockchain/defi")
+    @login_required
+    def api_defi_overview():
+        """Get DeFi protocol overview."""
+        try:
+            from core.blockchain import get_blockchain_manager
+            manager = get_blockchain_manager()
+            overview = manager.get_defi_overview()
+            return jsonify({"success": True, "defi": overview})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/blockchain/swap/quote", methods=["POST"])
+    @login_required
+    def api_swap_quote():
+        """Get DEX swap quotes."""
+        try:
+            from core.blockchain import get_blockchain_manager, Token, ChainType
+            manager = get_blockchain_manager()
+
+            data = request.get_json() or {}
+
+            from_token = Token(
+                symbol=data.get("from_symbol", "ETH"),
+                name=data.get("from_symbol", "ETH"),
+                address=data.get("from_address", ""),
+                chain=ChainType(data.get("chain", "ethereum")),
+                price_usd=float(data.get("from_price", 2000))
+            )
+
+            to_token = Token(
+                symbol=data.get("to_symbol", "USDC"),
+                name=data.get("to_symbol", "USDC"),
+                address=data.get("to_address", ""),
+                chain=ChainType(data.get("chain", "ethereum")),
+                price_usd=float(data.get("to_price", 1))
+            )
+
+            amount = float(data.get("amount", 1))
+
+            quotes = manager.dex.get_quote(from_token, to_token, amount)
+
+            return jsonify({
+                "success": True,
+                "quotes": [{
+                    "aggregator": q.aggregator,
+                    "from_amount": q.from_amount,
+                    "to_amount": q.to_amount,
+                    "price_impact": q.price_impact,
+                    "gas_estimate": q.gas_estimate,
+                    "route": q.route
+                } for q in quotes]
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/blockchain/yield/opportunities")
+    @login_required
+    def api_yield_opportunities():
+        """Get yield farming opportunities."""
+        try:
+            from core.blockchain import get_blockchain_manager
+            manager = get_blockchain_manager()
+
+            token = request.args.get("token", "ETH")
+            amount = float(request.args.get("amount", 1000))
+            max_risk = request.args.get("risk", "medium")
+
+            opportunities = manager.yield_optimizer.find_opportunities(
+                token=token,
+                amount=amount,
+                max_risk=max_risk
+            )
+
+            return jsonify({
+                "success": True,
+                "opportunities": [{
+                    "protocol": o["protocol"],
+                    "chain": o["chain"].value,
+                    "strategy": o["strategy"],
+                    "total_apy": o["total_apy"],
+                    "base_apy": o["base_apy"],
+                    "reward_apy": o["reward_apy"],
+                    "risk": o["risk"],
+                    "tvl": o["tvl"]
+                } for o in opportunities]
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/blockchain/gas/<chain>")
+    @login_required
+    def api_gas_prices(chain):
+        """Get gas prices for a chain."""
+        try:
+            from core.blockchain import get_blockchain_manager, ChainType
+            manager = get_blockchain_manager()
+
+            chain_type = ChainType(chain)
+            gas = manager.gas_tracker.get_gas_price(chain_type)
+
+            return jsonify({
+                "success": True,
+                "gas": {
+                    "chain": chain,
+                    "slow": gas.slow,
+                    "standard": gas.standard,
+                    "fast": gas.fast,
+                    "instant": gas.instant,
+                    "last_updated": gas.last_updated
+                }
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
+    # Routes - Advanced Analytics
+    # ==========================================================================
+
+    @app.route("/analytics/advanced")
+    @login_required
+    def advanced_analytics_page():
+        """Advanced analytics page."""
+        return render_template("advanced_analytics.html", stats=trading_state.get_stats())
+
+    @app.route("/api/analytics/monte-carlo", methods=["POST"])
+    @login_required
+    def api_monte_carlo():
+        """Run Monte Carlo simulation."""
+        try:
+            from core.advanced_analytics import get_advanced_analytics
+            analytics = get_advanced_analytics()
+
+            data = request.get_json() or {}
+
+            result = analytics.monte_carlo.simulate_portfolio(
+                initial_value=float(data.get("initial_value", 100000)),
+                expected_return=float(data.get("expected_return", 0.08)),
+                volatility=float(data.get("volatility", 0.15)),
+                time_horizon_days=int(data.get("time_horizon", 252)),
+                num_simulations=int(data.get("simulations", 5000))
+            )
+
+            return jsonify({
+                "success": True,
+                "result": {
+                    "simulations": result.simulations,
+                    "time_horizon_days": result.time_horizon_days,
+                    "initial_value": result.initial_value,
+                    "mean_final_value": result.mean_final_value,
+                    "median_final_value": result.median_final_value,
+                    "percentile_5": result.percentile_5,
+                    "percentile_95": result.percentile_95,
+                    "prob_profit": result.prob_profit,
+                    "prob_loss_20pct": result.prob_loss_20pct,
+                    "max_gain": result.max_gain,
+                    "max_loss": result.max_loss
+                }
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/analytics/optimize", methods=["POST"])
+    @login_required
+    def api_optimize_portfolio():
+        """Optimize portfolio allocation."""
+        try:
+            from core.advanced_analytics import get_advanced_analytics
+            analytics = get_advanced_analytics()
+
+            data = request.get_json() or {}
+            assets = data.get("assets", ["AAPL", "SPY", "BTC"])
+            expected_returns = data.get("expected_returns", {a: 0.08 for a in assets})
+
+            # Generate sample covariance matrix
+            covariance = {}
+            for a1 in assets:
+                covariance[a1] = {}
+                for a2 in assets:
+                    if a1 == a2:
+                        covariance[a1][a2] = 0.04  # 20% volatility
+                    else:
+                        covariance[a1][a2] = 0.01  # Some correlation
+
+            result = analytics.optimizer.optimize_portfolio(
+                assets=assets,
+                expected_returns=expected_returns,
+                covariance_matrix=covariance,
+                max_weight=float(data.get("max_weight", 0.4))
+            )
+
+            return jsonify({
+                "success": True,
+                "optimization": {
+                    "weights": {k: round(v * 100, 1) for k, v in result.weights.items()},
+                    "expected_return": result.expected_return,
+                    "volatility": result.volatility,
+                    "sharpe_ratio": result.sharpe_ratio,
+                    "efficient_frontier": result.efficient_frontier[:10]
+                }
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/analytics/scenarios", methods=["POST"])
+    @login_required
+    def api_scenario_analysis():
+        """Run scenario analysis."""
+        try:
+            from core.advanced_analytics import get_advanced_analytics
+            analytics = get_advanced_analytics()
+
+            data = request.get_json() or {}
+            portfolio = data.get("portfolio", {"AAPL": 50000, "SPY": 30000, "BTC": 20000})
+            asset_classes = data.get("asset_classes", {"AAPL": "stocks", "SPY": "stocks", "BTC": "crypto"})
+
+            results = analytics.scenario_analyzer.run_all_scenarios(portfolio, asset_classes)
+
+            return jsonify({
+                "success": True,
+                "scenarios": [{
+                    "name": r.scenario_name,
+                    "description": r.description,
+                    "impact": r.portfolio_impact,
+                    "impact_pct": r.portfolio_impact_pct,
+                    "probability": r.probability,
+                    "asset_impacts": r.asset_impacts
+                } for r in results]
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/analytics/risk", methods=["POST"])
+    @login_required
+    def api_risk_metrics():
+        """Calculate risk metrics."""
+        try:
+            from core.advanced_analytics import get_advanced_analytics
+            import random
+            analytics = get_advanced_analytics()
+
+            data = request.get_json() or {}
+
+            # Generate sample returns if not provided
+            returns = data.get("returns")
+            if not returns:
+                returns = [random.gauss(0.0003, 0.015) for _ in range(252)]
+
+            var_95 = analytics.risk_analyzer.calculate_var(returns, 0.95)
+            cvar_95 = analytics.risk_analyzer.calculate_cvar(returns, 0.95)
+            sortino = analytics.risk_analyzer.calculate_sortino(returns)
+
+            return jsonify({
+                "success": True,
+                "risk_metrics": {
+                    "var_95": round(var_95 * 100, 2),
+                    "cvar_95": round(cvar_95 * 100, 2),
+                    "sortino_ratio": round(sortino, 2),
+                    "daily_volatility": round(sum(abs(r) for r in returns) / len(returns) * 100, 2),
+                    "annualized_volatility": round((sum((r - sum(returns)/len(returns))**2 for r in returns) / len(returns))**0.5 * (252**0.5) * 100, 2)
+                }
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
     # Server-Sent Events for Real-time Updates
     # ==========================================================================
 

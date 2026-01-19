@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+
+{% block title %}DeFi Dashboard - Agentic Trading OS{% endblock %}
+{% block page_title %}DeFi Dashboard{% endblock %}
+
+{% block content %}
+<div class="defi-page">
+    <!-- Portfolio Overview -->
+    <div class="defi-stats-grid">
+        <div class="stat-card glass">
+            <div class="stat-icon gradient-blue">&#128176;</div>
+            <div class="stat-info">
+                <span class="stat-label">Total DeFi Value</span>
+                <span class="stat-value large" id="total-defi-value">$0.00</span>
+            </div>
+        </div>
+        <div class="stat-card glass">
+            <div class="stat-icon gradient-green">&#127793;</div>
+            <div class="stat-info">
+                <span class="stat-label">Avg. Yield APY</span>
+                <span class="stat-value large" id="avg-apy">0%</span>
+            </div>
+        </div>
+        <div class="stat-card glass">
+            <div class="stat-icon gradient-purple">&#128279;</div>
+            <div class="stat-info">
+                <span class="stat-label">Active Chains</span>
+                <span class="stat-value large" id="active-chains">0</span>
+            </div>
+        </div>
+        <div class="stat-card glass">
+            <div class="stat-icon gradient-orange">&#9889;</div>
+            <div class="stat-info">
+                <span class="stat-label">Gas (ETH)</span>
+                <span class="stat-value large" id="eth-gas">-- gwei</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="defi-grid">
+        <!-- Chain Breakdown -->
+        <div class="card glass">
+            <div class="card-header">
+                <h2>Chain Distribution</h2>
+            </div>
+            <div class="card-body">
+                <div class="chain-list" id="chain-list">
+                    <div class="empty-state">Loading chains...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Yield Opportunities -->
+        <div class="card glass wide">
+            <div class="card-header">
+                <h2>Yield Opportunities</h2>
+                <div class="filter-controls">
+                    <select id="yield-token" onchange="loadYieldOpportunities()">
+                        <option value="ETH">ETH</option>
+                        <option value="USDC">USDC</option>
+                        <option value="USDT">USDT</option>
+                        <option value="DAI">DAI</option>
+                    </select>
+                    <select id="yield-risk" onchange="loadYieldOpportunities()">
+                        <option value="low">Low Risk</option>
+                        <option value="medium" selected>Medium Risk</option>
+                        <option value="high">High Risk</option>
+                    </select>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="yield-table-container">
+                    <table class="yield-table">
+                        <thead>
+                            <tr>
+                                <th>Protocol</th>
+                                <th>Chain</th>
+                                <th>Strategy</th>
+                                <th>Base APY</th>
+                                <th>Rewards</th>
+                                <th>Total APY</th>
+                                <th>TVL</th>
+                                <th>Risk</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="yield-opportunities">
+                            <tr><td colspan="9" class="loading-row">Loading opportunities...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- DEX Swap -->
+        <div class="card glass">
+            <div class="card-header">
+                <h2>DEX Aggregator</h2>
+            </div>
+            <div class="card-body">
+                <div class="swap-form">
+                    <div class="swap-input-group">
+                        <label>From</label>
+                        <div class="swap-input">
+                            <input type="number" id="swap-from-amount" value="1" min="0" step="0.01">
+                            <select id="swap-from-token">
+                                <option value="ETH">ETH</option>
+                                <option value="USDC">USDC</option>
+                                <option value="WBTC">WBTC</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="swap-arrow">&#8595;</div>
+                    <div class="swap-input-group">
+                        <label>To</label>
+                        <div class="swap-input">
+                            <input type="number" id="swap-to-amount" readonly placeholder="0.00">
+                            <select id="swap-to-token">
+                                <option value="USDC">USDC</option>
+                                <option value="ETH">ETH</option>
+                                <option value="WBTC">WBTC</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-block" onclick="getSwapQuote()">Get Quotes</button>
+                </div>
+                <div class="swap-quotes" id="swap-quotes"></div>
+            </div>
+        </div>
+
+        <!-- Gas Tracker -->
+        <div class="card glass">
+            <div class="card-header">
+                <h2>Gas Tracker</h2>
+            </div>
+            <div class="card-body">
+                <div class="gas-grid" id="gas-grid">
+                    <div class="gas-card">
+                        <span class="gas-chain">Ethereum</span>
+                        <div class="gas-prices">
+                            <span class="gas-slow">Slow: -- gwei</span>
+                            <span class="gas-standard">Standard: -- gwei</span>
+                            <span class="gas-fast">Fast: -- gwei</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Protocol Overview -->
+        <div class="card glass wide">
+            <div class="card-header">
+                <h2>DeFi Protocols</h2>
+            </div>
+            <div class="card-body">
+                <div class="protocol-categories" id="protocol-categories">
+                    <div class="protocol-category">
+                        <h4>DEX</h4>
+                        <div class="protocol-list" id="dex-protocols"></div>
+                    </div>
+                    <div class="protocol-category">
+                        <h4>Lending</h4>
+                        <div class="protocol-list" id="lending-protocols"></div>
+                    </div>
+                    <div class="protocol-category">
+                        <h4>Yield</h4>
+                        <div class="protocol-list" id="yield-protocols"></div>
+                    </div>
+                    <div class="protocol-category">
+                        <h4>Staking</h4>
+                        <div class="protocol-list" id="staking-protocols"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadPortfolio();
+        loadYieldOpportunities();
+        loadGasPrices();
+        loadProtocols();
+    });
+
+    function loadPortfolio() {
+        fetch('/api/blockchain/portfolio')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const p = data.portfolio;
+                    document.getElementById('total-defi-value').textContent =
+                        '$' + (p.total_value || 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+                    document.getElementById('active-chains').textContent = p.chains_active || 0;
+
+                    // Chain breakdown
+                    const chainList = document.getElementById('chain-list');
+                    if (p.chain_breakdown && Object.keys(p.chain_breakdown).length > 0) {
+                        const total = Object.values(p.chain_breakdown).reduce((a, b) => a + b, 0);
+                        chainList.innerHTML = Object.entries(p.chain_breakdown).map(([chain, value]) => {
+                            const pct = total > 0 ? (value / total * 100).toFixed(1) : 0;
+                            return `
+                                <div class="chain-item">
+                                    <div class="chain-info">
+                                        <span class="chain-name">${chain}</span>
+                                        <span class="chain-value">$${value.toLocaleString()}</span>
+                                    </div>
+                                    <div class="chain-bar">
+                                        <div class="chain-bar-fill" style="width: ${pct}%"></div>
+                                    </div>
+                                    <span class="chain-pct">${pct}%</span>
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        chainList.innerHTML = '<div class="empty-state small">No chain data</div>';
+                    }
+                }
+            });
+    }
+
+    function loadYieldOpportunities() {
+        const token = document.getElementById('yield-token').value;
+        const risk = document.getElementById('yield-risk').value;
+
+        fetch(`/api/blockchain/yield/opportunities?token=${token}&risk=${risk}`)
+            .then(r => r.json())
+            .then(data => {
+                const tbody = document.getElementById('yield-opportunities');
+
+                if (data.success && data.opportunities.length > 0) {
+                    // Calculate average APY
+                    const avgApy = data.opportunities.reduce((sum, o) => sum + o.total_apy, 0) / data.opportunities.length;
+                    document.getElementById('avg-apy').textContent = avgApy.toFixed(1) + '%';
+
+                    tbody.innerHTML = data.opportunities.map(o => `
+                        <tr>
+                            <td><strong>${o.protocol}</strong></td>
+                            <td><span class="chain-badge">${o.chain}</span></td>
+                            <td>${o.strategy}</td>
+                            <td>${o.base_apy.toFixed(1)}%</td>
+                            <td class="positive">+${o.reward_apy.toFixed(1)}%</td>
+                            <td class="highlight">${o.total_apy.toFixed(1)}%</td>
+                            <td>$${(o.tvl / 1000000).toFixed(0)}M</td>
+                            <td><span class="risk-badge ${o.risk}">${o.risk}</span></td>
+                            <td><button class="btn btn-sm btn-primary">Deposit</button></td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="9" class="empty-row">No opportunities found</td></tr>';
+                }
+            });
+    }
+
+    function getSwapQuote() {
+        const fromAmount = document.getElementById('swap-from-amount').value;
+        const fromToken = document.getElementById('swap-from-token').value;
+        const toToken = document.getElementById('swap-to-token').value;
+
+        const quotesDiv = document.getElementById('swap-quotes');
+        quotesDiv.innerHTML = '<div class="loading">Fetching quotes...</div>';
+
+        // Price estimates
+        const prices = { ETH: 2000, USDC: 1, WBTC: 40000 };
+
+        fetch('/api/blockchain/swap/quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                from_symbol: fromToken,
+                to_symbol: toToken,
+                amount: parseFloat(fromAmount),
+                from_price: prices[fromToken] || 1,
+                to_price: prices[toToken] || 1
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success && data.quotes.length > 0) {
+                // Update to amount
+                document.getElementById('swap-to-amount').value = data.quotes[0].to_amount.toFixed(4);
+
+                quotesDiv.innerHTML = `
+                    <h4>Best Quotes</h4>
+                    ${data.quotes.slice(0, 3).map((q, i) => `
+                        <div class="quote-item ${i === 0 ? 'best' : ''}">
+                            <div class="quote-source">
+                                <span class="aggregator">${q.aggregator}</span>
+                                ${i === 0 ? '<span class="best-badge">Best</span>' : ''}
+                            </div>
+                            <div class="quote-details">
+                                <span class="quote-amount">${q.to_amount.toFixed(4)} ${toToken}</span>
+                                <span class="quote-impact">Impact: ${q.price_impact.toFixed(2)}%</span>
+                            </div>
+                            <div class="quote-route">
+                                Route: ${q.route.join(' -> ')}
+                            </div>
+                        </div>
+                    `).join('')}
+                `;
+            } else {
+                quotesDiv.innerHTML = '<div class="error">No quotes available</div>';
+            }
+        });
+    }
+
+    function loadGasPrices() {
+        const chains = ['ethereum', 'polygon', 'arbitrum'];
+        const gasGrid = document.getElementById('gas-grid');
+
+        Promise.all(chains.map(chain =>
+            fetch(`/api/blockchain/gas/${chain}`).then(r => r.json())
+        ))
+        .then(results => {
+            gasGrid.innerHTML = results.map(data => {
+                if (!data.success) return '';
+                const g = data.gas;
+                return `
+                    <div class="gas-card">
+                        <span class="gas-chain">${g.chain}</span>
+                        <div class="gas-prices">
+                            <div class="gas-row">
+                                <span class="gas-label">Slow</span>
+                                <span class="gas-value">${g.slow.toFixed(1)} gwei</span>
+                            </div>
+                            <div class="gas-row">
+                                <span class="gas-label">Standard</span>
+                                <span class="gas-value">${g.standard.toFixed(1)} gwei</span>
+                            </div>
+                            <div class="gas-row fast">
+                                <span class="gas-label">Fast</span>
+                                <span class="gas-value">${g.fast.toFixed(1)} gwei</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Update header gas
+            const ethGas = results.find(r => r.gas?.chain === 'ethereum');
+            if (ethGas) {
+                document.getElementById('eth-gas').textContent = ethGas.gas.standard.toFixed(0) + ' gwei';
+            }
+        });
+    }
+
+    function loadProtocols() {
+        fetch('/api/blockchain/defi')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.defi.protocols_by_type) {
+                    const types = data.defi.protocols_by_type;
+
+                    renderProtocolList('dex-protocols', types.dex || []);
+                    renderProtocolList('lending-protocols', types.lending || []);
+                    renderProtocolList('yield-protocols', types.yield || []);
+                    renderProtocolList('staking-protocols', types.staking || []);
+                }
+            });
+    }
+
+    function renderProtocolList(elementId, protocols) {
+        const container = document.getElementById(elementId);
+        if (!container) return;
+
+        if (protocols.length === 0) {
+            container.innerHTML = '<span class="no-protocols">No protocols</span>';
+            return;
+        }
+
+        container.innerHTML = protocols.slice(0, 4).map(p => `
+            <div class="protocol-chip">
+                <span class="protocol-name">${p.name}</span>
+                <span class="protocol-tvl">$${(p.tvl / 1000000000).toFixed(1)}B</span>
+            </div>
+        `).join('');
+    }
+</script>
+{% endblock %}

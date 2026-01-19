@@ -56,6 +56,18 @@
                         <span class="nav-text">Leaderboard</span>
                     </a>
                 </li>
+                <li class="nav-item {% if request.endpoint == 'ai_assistant' %}active{% endif %}">
+                    <a href="{{ url_for('ai_assistant') }}">
+                        <span class="nav-icon">&#129302;</span>
+                        <span class="nav-text">AI Assistant</span>
+                    </a>
+                </li>
+                <li class="nav-item {% if request.endpoint == 'defi_dashboard' %}active{% endif %}">
+                    <a href="{{ url_for('defi_dashboard') }}">
+                        <span class="nav-icon">&#128279;</span>
+                        <span class="nav-text">DeFi</span>
+                    </a>
+                </li>
                 <li class="nav-item {% if request.endpoint == 'admin' %}active{% endif %}">
                     <a href="{{ url_for('admin') }}">
                         <span class="nav-icon">&#9881;</span>

@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+
+{% block title %}AI Assistant - Agentic Trading OS{% endblock %}
+{% block page_title %}AI Trading Assistant{% endblock %}
+
+{% block content %}
+<div class="ai-assistant-page">
+    <!-- Chat Interface -->
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="ai-avatar">
+                <span class="avatar-icon">&#129302;</span>
+            </div>
+            <div class="ai-info">
+                <h3>Trading AI</h3>
+                <span class="status online">Online</span>
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="clearChat()">Clear Chat</button>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+            <div class="message assistant">
+                <div class="message-content">
+                    <p>Hello! I'm your AI trading assistant. I can help you with:</p>
+                    <ul>
+                        <li><strong>Trading:</strong> "Buy 10 AAPL" or "Sell SPY"</li>
+                        <li><strong>Analysis:</strong> "Analyze BTC" or "Technical analysis on TSLA"</li>
+                        <li><strong>Portfolio:</strong> "Show my portfolio" or "What's my risk?"</li>
+                        <li><strong>Alerts:</strong> "Alert me when ETH hits $3000"</li>
+                    </ul>
+                    <p>What would you like to do?</p>
+                </div>
+                <div class="message-time">Just now</div>
+            </div>
+        </div>
+
+        <div class="chat-suggestions" id="chat-suggestions">
+            <button class="suggestion-btn" onclick="sendSuggestion('Analyze SPY')">Analyze SPY</button>
+            <button class="suggestion-btn" onclick="sendSuggestion('Show my portfolio')">Portfolio</button>
+            <button class="suggestion-btn" onclick="sendSuggestion('Price of BTC')">BTC Price</button>
+            <button class="suggestion-btn" onclick="sendSuggestion('What is my risk?')">Risk Analysis</button>
+        </div>
+
+        <div class="chat-input-container">
+            <input type="text" id="chat-input" placeholder="Ask me anything about trading..."
+                   onkeypress="if(event.key === 'Enter') sendMessage()">
+            <button class="send-btn" onclick="sendMessage()">
+                <span>&#10148;</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Analysis Panel -->
+    <div class="analysis-panel">
+        <div class="card">
+            <div class="card-header">
+                <h3>Quick Analysis</h3>
+            </div>
+            <div class="card-body">
+                <div class="quick-analysis-form">
+                    <div class="form-group">
+                        <label>Symbol</label>
+                        <input type="text" id="analysis-symbol" value="SPY" placeholder="Enter symbol">
+                    </div>
+                    <button class="btn btn-primary btn-block" onclick="runQuickAnalysis()">
+                        Analyze
+                    </button>
+                </div>
+                <div class="analysis-result" id="analysis-result">
+                    <div class="empty-state small">
+                        <p>Enter a symbol to get AI-powered analysis</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>AI Capabilities</h3>
+            </div>
+            <div class="card-body">
+                <div class="capability-list">
+                    <div class="capability-item">
+                        <span class="capability-icon">&#128200;</span>
+                        <div class="capability-info">
+                            <h4>Market Analysis</h4>
+                            <p>Technical & sentiment analysis</p>
+                        </div>
+                    </div>
+                    <div class="capability-item">
+                        <span class="capability-icon">&#128176;</span>
+                        <div class="capability-info">
+                            <h4>Trade Execution</h4>
+                            <p>Natural language trading</p>
+                        </div>
+                    </div>
+                    <div class="capability-item">
+                        <span class="capability-icon">&#128202;</span>
+                        <div class="capability-info">
+                            <h4>Portfolio Management</h4>
+                            <p>Position & risk tracking</p>
+                        </div>
+                    </div>
+                    <div class="capability-item">
+                        <span class="capability-icon">&#128276;</span>
+                        <div class="capability-info">
+                            <h4>Smart Alerts</h4>
+                            <p>AI-powered notifications</p>
+                        </div>
+                    </div>
+                    <div class="capability-item">
+                        <span class="capability-icon">&#127919;</span>
+                        <div class="capability-info">
+                            <h4>Predictions</h4>
+                            <p>ML-based price forecasts</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let isTyping = false;
+
+    function sendMessage() {
+        const input = document.getElementById('chat-input');
+        const message = input.value.trim();
+
+        if (!message) return;
+
+        // Add user message
+        addMessage('user', message);
+        input.value = '';
+
+        // Show typing indicator
+        showTyping();
+
+        // Send to API
+        fetch('/api/ai/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: message })
+        })
+        .then(r => r.json())
+        .then(data => {
+            hideTyping();
+            if (data.success) {
+                addMessage('assistant', data.response.message, data.response.suggestions);
+                if (data.response.actions && data.response.actions.length > 0) {
+                    handleActions(data.response.actions);
+                }
+            } else {
+                addMessage('assistant', 'Sorry, I encountered an error. Please try again.');
+            }
+        })
+        .catch(err => {
+            hideTyping();
+            addMessage('assistant', 'Sorry, I could not process your request.');
+        });
+    }
+
+    function sendSuggestion(text) {
+        document.getElementById('chat-input').value = text;
+        sendMessage();
+    }
+
+    function addMessage(role, content, suggestions = []) {
+        const container = document.getElementById('chat-messages');
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}`;
+
+        // Convert markdown-like formatting
+        const formattedContent = content
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n/g, '<br>');
+
+        messageDiv.innerHTML = `
+            <div class="message-content">${formattedContent}</div>
+            <div class="message-time">${time}</div>
+        `;
+
+        container.appendChild(messageDiv);
+        container.scrollTop = container.scrollHeight;
+
+        // Update suggestions
+        if (suggestions.length > 0) {
+            updateSuggestions(suggestions);
+        }
+    }
+
+    function updateSuggestions(suggestions) {
+        const container = document.getElementById('chat-suggestions');
+        container.innerHTML = suggestions.map(s =>
+            `<button class="suggestion-btn" onclick="sendSuggestion('${s}')">${s}</button>`
+        ).join('');
+    }
+
+    function showTyping() {
+        if (isTyping) return;
+        isTyping = true;
+
+        const container = document.getElementById('chat-messages');
+        const typingDiv = document.createElement('div');
+        typingDiv.id = 'typing-indicator';
+        typingDiv.className = 'message assistant typing';
+        typingDiv.innerHTML = `
+            <div class="typing-dots">
+                <span></span><span></span><span></span>
+            </div>
+        `;
+        container.appendChild(typingDiv);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function hideTyping() {
+        isTyping = false;
+        const indicator = document.getElementById('typing-indicator');
+        if (indicator) indicator.remove();
+    }
+
+    function handleActions(actions) {
+        actions.forEach(action => {
+            if (action.type === 'confirm_trade') {
+                // Show trade confirmation UI
+                console.log('Trade confirmation:', action.data);
+            }
+        });
+    }
+
+    function clearChat() {
+        const container = document.getElementById('chat-messages');
+        container.innerHTML = `
+            <div class="message assistant">
+                <div class="message-content">
+                    <p>Chat cleared. How can I help you?</p>
+                </div>
+                <div class="message-time">Just now</div>
+            </div>
+        `;
+    }
+
+    function runQuickAnalysis() {
+        const symbol = document.getElementById('analysis-symbol').value.toUpperCase();
+        const resultDiv = document.getElementById('analysis-result');
+
+        resultDiv.innerHTML = '<div class="loading">Analyzing...</div>';
+
+        fetch(`/api/ai/analyze/${symbol}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const a = data.analysis;
+                    const tech = a.technical || {};
+                    const pred = a.ai_prediction || {};
+                    const rec = a.recommendation || {};
+
+                    resultDiv.innerHTML = `
+                        <div class="analysis-section">
+                            <h4>${symbol} Analysis</h4>
+                            <div class="analysis-metric">
+                                <span class="label">Trend</span>
+                                <span class="value ${tech.trend}">${(tech.trend || 'N/A').toUpperCase()}</span>
+                            </div>
+                            <div class="analysis-metric">
+                                <span class="label">RSI</span>
+                                <span class="value">${tech.rsi || 'N/A'} (${tech.rsi_signal || ''})</span>
+                            </div>
+                            <div class="analysis-metric">
+                                <span class="label">Volatility</span>
+                                <span class="value">${tech.volatility || 'N/A'}</span>
+                            </div>
+                        </div>
+                        <div class="analysis-section">
+                            <h4>AI Prediction</h4>
+                            <div class="analysis-metric">
+                                <span class="label">1 Day</span>
+                                <span class="value">$${pred.prediction_1d || 'N/A'}</span>
+                            </div>
+                            <div class="analysis-metric">
+                                <span class="label">1 Week</span>
+                                <span class="value">$${pred.prediction_1w || 'N/A'}</span>
+                            </div>
+                            <div class="analysis-metric">
+                                <span class="label">Confidence</span>
+                                <span class="value">${pred.confidence || 0}%</span>
+                            </div>
+                        </div>
+                        <div class="analysis-section recommendation">
+                            <h4>Recommendation</h4>
+                            <div class="rec-action ${rec.action?.toLowerCase()}">${rec.action || 'HOLD'}</div>
+                            <p class="rec-reason">${rec.reasoning || ''}</p>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = '<div class="error">Analysis failed</div>';
+                }
+            })
+            .catch(err => {
+                resultDiv.innerHTML = '<div class="error">Error loading analysis</div>';
+            });
+    }
+
+    // Focus on input when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('chat-input').focus();
+    });
+</script>
+{% endblock %}
