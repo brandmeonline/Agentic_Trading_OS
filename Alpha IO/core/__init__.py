@@ -153,3 +153,119 @@ try:
     ])
 except ImportError:
     PerformanceAnalyzer = None
+
+# Deep Learning Alpha Models
+try:
+    from core.deep_learning import (
+        DeepAlphaGenerator, AlphaModelEnsemble,
+        LSTMAttentionModel, TemporalFusionTransformer,
+        NBEATSModel, WaveNetModel
+    )
+    __all__.extend([
+        "DeepAlphaGenerator", "AlphaModelEnsemble",
+        "LSTMAttentionModel", "TemporalFusionTransformer",
+        "NBEATSModel", "WaveNetModel"
+    ])
+except ImportError:
+    DeepAlphaGenerator = None
+    AlphaModelEnsemble = None
+
+# Feature Engineering
+try:
+    from core.feature_engine import (
+        FeatureEngine, FeatureConfig, FeatureSet,
+        TechnicalFeatures, MicrostructureFeatures,
+        CrossAssetFeatures, RegimeFeatures
+    )
+    __all__.extend([
+        "FeatureEngine", "FeatureConfig", "FeatureSet",
+        "TechnicalFeatures", "MicrostructureFeatures",
+        "CrossAssetFeatures", "RegimeFeatures"
+    ])
+except ImportError:
+    FeatureEngine = None
+    FeatureConfig = None
+
+# NLP Sentiment Analysis
+try:
+    from core.nlp_engine import (
+        NLPEngine, SentimentAnalyzer, NewsProcessor,
+        SocialMediaAnalyzer, SentimentSignal
+    )
+    __all__.extend([
+        "NLPEngine", "SentimentAnalyzer", "NewsProcessor",
+        "SocialMediaAnalyzer", "SentimentSignal"
+    ])
+except ImportError:
+    NLPEngine = None
+    SentimentAnalyzer = None
+
+# Real-Time Data Infrastructure
+try:
+    from core.realtime_data import (
+        RealtimeDataManager, WebSocketFeed, FeatureStore,
+        DataNormalizer, StreamProcessor
+    )
+    __all__.extend([
+        "RealtimeDataManager", "WebSocketFeed", "FeatureStore",
+        "DataNormalizer", "StreamProcessor"
+    ])
+except ImportError:
+    RealtimeDataManager = None
+    WebSocketFeed = None
+
+# Smart Order Routing
+try:
+    from core.smart_router import (
+        SmartOrderRouter, VenueAnalyzer, LiquidityAggregator,
+        ExecutionOptimizer, TransactionCostModel
+    )
+    __all__.extend([
+        "SmartOrderRouter", "VenueAnalyzer", "LiquidityAggregator",
+        "ExecutionOptimizer", "TransactionCostModel"
+    ])
+except ImportError:
+    SmartOrderRouter = None
+    VenueAnalyzer = None
+
+# Production Monitoring
+try:
+    from core.monitoring import (
+        SystemMonitor, AlertManager, MetricsCollector,
+        HealthChecker, PerformanceProfiler
+    )
+    __all__.extend([
+        "SystemMonitor", "AlertManager", "MetricsCollector",
+        "HealthChecker", "PerformanceProfiler"
+    ])
+except ImportError:
+    SystemMonitor = None
+    AlertManager = None
+
+# Advanced Backtesting
+try:
+    from core.advanced_backtest import (
+        WalkForwardOptimizer, MonteCarloSimulator,
+        RegimeAwareBacktest, OutOfSampleValidator
+    )
+    __all__.extend([
+        "WalkForwardOptimizer", "MonteCarloSimulator",
+        "RegimeAwareBacktest", "OutOfSampleValidator"
+    ])
+except ImportError:
+    WalkForwardOptimizer = None
+    MonteCarloSimulator = None
+
+# Stress Testing & Tail Risk
+try:
+    from core.stress_testing import (
+        StressTester, TailRiskHedger, ScenarioGenerator,
+        ExtremeValueAnalyzer, CrisisSimulator
+    )
+    __all__.extend([
+        "StressTester", "TailRiskHedger", "ScenarioGenerator",
+        "ExtremeValueAnalyzer", "CrisisSimulator"
+    ])
+except ImportError:
+    StressTester = None
+    TailRiskHedger = None
