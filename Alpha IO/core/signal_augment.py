@@ -31,13 +31,9 @@ class SignalAugmentor:
         synthetic_signals = []
         for label, examples in clusters.items():
             prompt = (
-                "Generate new trading alpha signals inspired by these successful examples:
-" +
-                "
-".join(examples[:5]) +
-                "
-
-New signals:"
+                "Generate new trading alpha signals inspired by these successful examples:\n" +
+                "\n".join(examples[:5]) +
+                "\n\nNew signals:"
             )
             response = openai.ChatCompletion.create(
                 model="gpt-4",
@@ -58,5 +54,4 @@ if __name__ == "__main__":
     clusters = augmentor.cluster_successful_signals("data/trade_log.csv")
     new_signals = augmentor.synthesize_from_clusters(clusters)
     for block in new_signals:
-        print(f"[AUGMENTED SIGNALS] Cluster {block['cluster']}:
-{block['signals']}")
+        print(f"[AUGMENTED SIGNALS] Cluster {block['cluster']}:\n{block['signals']}")
