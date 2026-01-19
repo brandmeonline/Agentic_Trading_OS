@@ -753,6 +753,173 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         return jsonify(trading_state.components)
 
     # ==========================================================================
+    # Routes - Alerts
+    # ==========================================================================
+
+    @app.route("/alerts")
+    @login_required
+    def alerts():
+        """Alerts page."""
+        return render_template("alerts.html", stats=trading_state.get_stats())
+
+    @app.route("/api/alerts", methods=["GET"])
+    @login_required
+    def api_get_alerts():
+        """Get all alerts."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            alerts = manager.list_alerts()
+            return jsonify([{
+                "id": a.id,
+                "name": a.name,
+                "condition": {
+                    "symbol": a.condition.symbol,
+                    "alert_type": a.condition.alert_type.value,
+                    "value": a.condition.value,
+                    "comparison": a.condition.comparison
+                },
+                "channels": [c.value for c in a.channels],
+                "status": a.status.value,
+                "trigger_count": a.trigger_count,
+                "created_at": a.created_at
+            } for a in alerts])
+        except Exception as e:
+            return jsonify([])
+
+    @app.route("/api/alerts", methods=["POST"])
+    @login_required
+    def api_create_alert():
+        """Create a new alert."""
+        try:
+            from core.alerts import get_alert_manager, AlertType, AlertChannel
+            manager = get_alert_manager()
+
+            data = request.get_json() or {}
+
+            # Map alert type
+            type_map = {
+                "price_above": AlertType.PRICE_ABOVE,
+                "price_below": AlertType.PRICE_BELOW,
+                "price_cross": AlertType.PRICE_CROSS,
+                "percent_change": AlertType.PERCENT_CHANGE
+            }
+            alert_type = type_map.get(data.get("alert_type"), AlertType.PRICE_ABOVE)
+
+            # Map channels
+            channel_map = {
+                "in_app": AlertChannel.IN_APP,
+                "webhook": AlertChannel.WEBHOOK,
+                "discord": AlertChannel.DISCORD,
+                "slack": AlertChannel.SLACK,
+                "email": AlertChannel.EMAIL
+            }
+            channels = [channel_map[c] for c in data.get("channels", ["in_app"]) if c in channel_map]
+
+            # Comparison based on type
+            comparison = "gte" if alert_type == AlertType.PRICE_ABOVE else "lte"
+            if alert_type == AlertType.PRICE_CROSS:
+                comparison = "cross_above"
+
+            alert = manager.create_alert(
+                name=data.get("name", "New Alert"),
+                alert_type=alert_type,
+                symbol=data.get("symbol", "AAPL"),
+                value=float(data.get("value", 0)),
+                channels=channels,
+                comparison=comparison,
+                message=data.get("message", ""),
+                webhook_url=data.get("webhook_url", ""),
+                email_to=data.get("email_to", ""),
+                max_triggers=int(data.get("max_triggers", 0)),
+                cooldown_seconds=int(data.get("cooldown", 60))
+            )
+
+            return jsonify({"success": True, "alert_id": alert.id})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/alerts/<alert_id>", methods=["DELETE"])
+    @login_required
+    def api_delete_alert(alert_id):
+        """Delete an alert."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            success = manager.delete_alert(alert_id)
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/alerts/<alert_id>/enable", methods=["POST"])
+    @login_required
+    def api_enable_alert(alert_id):
+        """Enable an alert."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            success = manager.enable_alert(alert_id)
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/alerts/<alert_id>/disable", methods=["POST"])
+    @login_required
+    def api_disable_alert(alert_id):
+        """Disable an alert."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            success = manager.disable_alert(alert_id)
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/notifications", methods=["GET"])
+    @login_required
+    def api_get_notifications():
+        """Get notifications."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            notifications = manager.get_notifications(limit=50)
+            return jsonify([{
+                "id": n.id,
+                "title": n.title,
+                "message": n.message,
+                "type": n.type,
+                "timestamp": n.timestamp,
+                "read": n.read,
+                "data": n.data
+            } for n in notifications])
+        except Exception as e:
+            return jsonify([])
+
+    @app.route("/api/notifications/<notification_id>/read", methods=["POST"])
+    @login_required
+    def api_mark_notification_read(notification_id):
+        """Mark notification as read."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            manager.mark_read(notification_id)
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/notifications/read-all", methods=["POST"])
+    @login_required
+    def api_mark_all_notifications_read():
+        """Mark all notifications as read."""
+        try:
+            from core.alerts import get_alert_manager
+            manager = get_alert_manager()
+            manager.mark_all_read()
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
     # Server-Sent Events for Real-time Updates
     # ==========================================================================
 

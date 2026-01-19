@@ -1,0 +1,48 @@
+{
+  "alerts": {
+    "d8be59ef76ff": {
+      "id": "d8be59ef76ff",
+      "name": "AAPL above $200.0",
+      "condition": {
+        "alert_type": "price_above",
+        "symbol": "AAPL",
+        "value": 200.0,
+        "comparison": "gte"
+      },
+      "channels": [
+        "in_app"
+      ],
+      "status": "active",
+      "message": "AAPL is now above $200.0",
+      "webhook_url": "",
+      "email_to": "",
+      "created_at": "2026-01-19T18:54:26.185266",
+      "triggered_at": "",
+      "trigger_count": 0,
+      "max_triggers": 0,
+      "cooldown_seconds": 60
+    },
+    "bff6da703a10": {
+      "id": "bff6da703a10",
+      "name": "Test AAPL Alert",
+      "condition": {
+        "alert_type": "price_above",
+        "symbol": "AAPL",
+        "value": 200.0,
+        "comparison": "gte"
+      },
+      "channels": [
+        "in_app"
+      ],
+      "status": "active",
+      "message": "AAPL alert: price_above 200.0",
+      "webhook_url": "",
+      "email_to": "",
+      "created_at": "2026-01-19T18:54:44.637287",
+      "triggered_at": "",
+      "trigger_count": 0,
+      "max_triggers": 0,
+      "cooldown_seconds": 60
+    }
+  }
+}
