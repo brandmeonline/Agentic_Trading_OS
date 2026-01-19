@@ -285,3 +285,114 @@ try:
 except ImportError:
     UnifiedTradingEngine = None
     create_trading_system = None
+
+# Exchange Connectors
+try:
+    from core.exchange_connectors import (
+        ExchangeConnector, BinanceConnector, CoinbaseConnector,
+        ExchangeManager, ExchangeConfig, ExchangeType,
+        OrderRequest, Order, Balance, Position,
+        create_binance_connector, create_coinbase_connector, create_exchange_manager
+    )
+    __all__.extend([
+        "ExchangeConnector", "BinanceConnector", "CoinbaseConnector",
+        "ExchangeManager", "ExchangeConfig", "ExchangeType",
+        "OrderRequest", "Order", "Balance", "Position",
+        "create_binance_connector", "create_coinbase_connector", "create_exchange_manager"
+    ])
+except ImportError:
+    ExchangeConnector = None
+    BinanceConnector = None
+    CoinbaseConnector = None
+    ExchangeManager = None
+
+# REST API Server
+try:
+    from core.rest_api import (
+        RESTAPIServer, APIConfig, APIRequest, APIResponse,
+        WebSocketHandler, TradingAPIHandlers,
+        create_api_server, create_websocket_handler, generate_openapi_spec
+    )
+    __all__.extend([
+        "RESTAPIServer", "APIConfig", "APIRequest", "APIResponse",
+        "WebSocketHandler", "TradingAPIHandlers",
+        "create_api_server", "create_websocket_handler", "generate_openapi_spec"
+    ])
+except ImportError:
+    RESTAPIServer = None
+    create_api_server = None
+
+# Database Persistence
+try:
+    from core.database import (
+        DatabaseManager, DatabaseConfig, DatabaseConnection,
+        OrderRepository, TradeRepository, PositionRepository,
+        StrategyStateRepository, OHLCVRepository,
+        OrderRecord, TradeRecord, PositionRecord, StrategyStateRecord, OHLCVRecord,
+        create_database_manager
+    )
+    __all__.extend([
+        "DatabaseManager", "DatabaseConfig", "DatabaseConnection",
+        "OrderRepository", "TradeRepository", "PositionRepository",
+        "StrategyStateRepository", "OHLCVRepository",
+        "OrderRecord", "TradeRecord", "PositionRecord", "StrategyStateRecord", "OHLCVRecord",
+        "create_database_manager"
+    ])
+except ImportError:
+    DatabaseManager = None
+    create_database_manager = None
+
+# Advanced Reinforcement Learning
+try:
+    from core.advanced_rl import (
+        RLAgent, DQNAgent, PPOAgent, A2CAgent, SACAgent,
+        RLConfig, RLAlgorithm, Experience, Trajectory,
+        ReplayBuffer, PrioritizedReplayBuffer,
+        TradingEnvironment, create_agent, create_trading_env
+    )
+    __all__.extend([
+        "RLAgent", "DQNAgent", "PPOAgent", "A2CAgent", "SACAgent",
+        "RLConfig", "RLAlgorithm", "Experience", "Trajectory",
+        "ReplayBuffer", "PrioritizedReplayBuffer",
+        "TradingEnvironment", "create_agent", "create_trading_env"
+    ])
+except ImportError:
+    RLAgent = None
+    DQNAgent = None
+    PPOAgent = None
+    A2CAgent = None
+
+# Audit Logging
+try:
+    from core.audit_log import (
+        Logger, TradingLogger, LogConfig, LogLevel, LogCategory,
+        LogEntry, AuditEntry, AuditAction,
+        LogAnalyzer, create_logger, create_trading_logger, get_logger
+    )
+    __all__.extend([
+        "Logger", "TradingLogger", "LogConfig", "LogLevel", "LogCategory",
+        "LogEntry", "AuditEntry", "AuditAction",
+        "LogAnalyzer", "create_logger", "create_trading_logger", "get_logger"
+    ])
+except ImportError:
+    Logger = None
+    TradingLogger = None
+    create_logger = None
+
+# Configuration Manager
+try:
+    from core.config_manager import (
+        ConfigManager, ConfigSchema, ConfigField, ConfigStore,
+        Environment, TradingConfig, ExchangeConfig as ExchangeConfigDC, DatabaseConfig as DatabaseConfigDC,
+        create_config_manager, get_config, set_config,
+        create_trading_schema, create_exchange_schema, create_database_schema
+    )
+    __all__.extend([
+        "ConfigManager", "ConfigSchema", "ConfigField", "ConfigStore",
+        "Environment", "TradingConfig",
+        "create_config_manager", "get_config", "set_config",
+        "create_trading_schema", "create_exchange_schema", "create_database_schema"
+    ])
+except ImportError:
+    ConfigManager = None
+    create_config_manager = None
