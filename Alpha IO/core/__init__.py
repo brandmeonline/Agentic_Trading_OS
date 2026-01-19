@@ -126,3 +126,30 @@ try:
 except ImportError:
     BacktestEngine = None
     BacktestConfig = None
+
+# Portfolio optimization
+try:
+    from core.portfolio import (
+        PortfolioOptimizer, OptimizationMethod, PortfolioWeights,
+        OptimizationConfig, RebalanceEngine
+    )
+    __all__.extend([
+        "PortfolioOptimizer", "OptimizationMethod", "PortfolioWeights",
+        "OptimizationConfig", "RebalanceEngine"
+    ])
+except ImportError:
+    PortfolioOptimizer = None
+    OptimizationMethod = None
+
+# Performance analytics
+try:
+    from core.analytics import (
+        PerformanceAnalyzer, ReturnMetrics, RiskMetrics,
+        RatioMetrics, TradeMetrics
+    )
+    __all__.extend([
+        "PerformanceAnalyzer", "ReturnMetrics", "RiskMetrics",
+        "RatioMetrics", "TradeMetrics"
+    ])
+except ImportError:
+    PerformanceAnalyzer = None
