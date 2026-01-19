@@ -82,3 +82,47 @@ try:
     __all__.append("AlphaLeakAgent")
 except ImportError:
     AlphaLeakAgent = None
+
+# Strategy framework
+try:
+    from core.strategy import (
+        Strategy, StrategyOutput, StrategySignal, StrategyEnsemble,
+        MomentumStrategy, MeanReversionStrategy, TrendFollowingStrategy,
+        VolatilityBreakoutStrategy, create_default_ensemble
+    )
+    __all__.extend([
+        "Strategy", "StrategyOutput", "StrategySignal", "StrategyEnsemble",
+        "MomentumStrategy", "MeanReversionStrategy", "TrendFollowingStrategy",
+        "VolatilityBreakoutStrategy", "create_default_ensemble"
+    ])
+except ImportError:
+    Strategy = None
+    StrategyEnsemble = None
+
+# Market data
+try:
+    from core.market_data import (
+        MarketDataFeed, SimulatedDataFeed, CSVDataFeed,
+        OHLCV, Quote, TimeFrame, DataAggregator
+    )
+    __all__.extend([
+        "MarketDataFeed", "SimulatedDataFeed", "CSVDataFeed",
+        "OHLCV", "Quote", "TimeFrame", "DataAggregator"
+    ])
+except ImportError:
+    MarketDataFeed = None
+    SimulatedDataFeed = None
+
+# Backtesting
+try:
+    from core.backtest_engine import (
+        BacktestEngine, BacktestConfig, BacktestResult,
+        BacktestMetrics, run_quick_backtest
+    )
+    __all__.extend([
+        "BacktestEngine", "BacktestConfig", "BacktestResult",
+        "BacktestMetrics", "run_quick_backtest"
+    ])
+except ImportError:
+    BacktestEngine = None
+    BacktestConfig = None
