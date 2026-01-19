@@ -431,3 +431,19 @@ except ImportError:
     LiveDataManager = None
     BinancePublicClient = None
     CoinGeckoClient = None
+
+# System Orchestrator
+try:
+    from core.orchestrator import (
+        TradingOrchestrator, OrchestratorConfig, TradingMode,
+        SystemStatus, SystemState, EventBus, Event, EventType,
+        create_orchestrator
+    )
+    __all__.extend([
+        "TradingOrchestrator", "OrchestratorConfig", "TradingMode",
+        "SystemStatus", "SystemState", "EventBus", "Event", "EventType",
+        "create_orchestrator"
+    ])
+except ImportError:
+    TradingOrchestrator = None
+    create_orchestrator = None

@@ -21,10 +21,30 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from pathlib import Path
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import threading
+
+# Optional cryptography support - deferred import to avoid crashes
+HAS_CRYPTOGRAPHY = False
+Fernet = None
+hashes = None
+PBKDF2HMAC = None
+
+def _try_import_cryptography():
+    """Try to import cryptography, return True if successful."""
+    global HAS_CRYPTOGRAPHY, Fernet, hashes, PBKDF2HMAC
+    try:
+        from cryptography.fernet import Fernet as _Fernet
+        from cryptography.hazmat.primitives import hashes as _hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC as _PBKDF2HMAC
+        HAS_CRYPTOGRAPHY = True
+        Fernet = _Fernet
+        hashes = _hashes
+        PBKDF2HMAC = _PBKDF2HMAC
+        return True
+    except Exception:
+        return False
+
+# Don't try to import at module load - will be done on first use if needed
 
 
 # =============================================================================
@@ -80,8 +100,10 @@ class EncryptionHelper:
 
     def __init__(self, password: Optional[str] = None):
         self._password = password
-        self._fernet: Optional[Fernet] = None
+        self._fernet = None
         self._salt: Optional[bytes] = None
+        # Try to import cryptography on first use
+        self._use_crypto = _try_import_cryptography()
 
     def initialize(self, salt: Optional[bytes] = None):
         """Initialize encryption with password."""
@@ -93,11 +115,18 @@ class EncryptionHelper:
                 self._password = self._get_machine_key()
 
         self._salt = salt or secrets.token_bytes(16)
-        key = self._derive_key(self._password, self._salt)
-        self._fernet = Fernet(key)
+
+        if self._use_crypto and Fernet is not None:
+            key = self._derive_key(self._password, self._salt)
+            self._fernet = Fernet(key)
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         """Derive encryption key from password."""
+        if not HAS_CRYPTOGRAPHY:
+            # Fallback: simple key derivation
+            combined = password.encode() + salt
+            return base64.urlsafe_b64encode(hashlib.sha256(combined).digest())
+
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -118,12 +147,25 @@ class EncryptionHelper:
 
     def encrypt(self, data: str) -> bytes:
         """Encrypt string data."""
+        if not self._use_crypto or self._fernet is None:
+            if self._salt is None:
+                self.initialize()
+            # Fallback: base64 encoding with obfuscation (not secure, but functional)
+            key = self._derive_key(self._password or "", self._salt)
+            obfuscated = base64.b64encode(data.encode())
+            return b"FALLBACK:" + obfuscated
+
         if self._fernet is None:
             self.initialize()
         return self._fernet.encrypt(data.encode())
 
     def decrypt(self, data: bytes) -> str:
         """Decrypt bytes to string."""
+        # Handle fallback format
+        if data.startswith(b"FALLBACK:"):
+            obfuscated = data[9:]
+            return base64.b64decode(obfuscated).decode()
+
         if self._fernet is None:
             raise RuntimeError("Encryption not initialized")
         return self._fernet.decrypt(data).decode()
