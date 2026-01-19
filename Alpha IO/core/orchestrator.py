@@ -98,6 +98,14 @@ except ImportError:
     create_agent = None
     RLAlgorithm = None
 
+try:
+    from core.alpaca_connector import (
+        create_alpaca_client, AlpacaClient, AlpacaConfig, AlpacaEnvironment
+    )
+except ImportError:
+    create_alpaca_client = None
+    AlpacaClient = None
+
 
 # =============================================================================
 # Configuration
@@ -121,6 +129,13 @@ class SystemStatus(Enum):
     ERROR = "error"
 
 
+class ExchangeType(Enum):
+    """Supported exchange types."""
+    BINANCE = "binance"
+    ALPACA = "alpaca"
+    COINBASE = "coinbase"
+
+
 @dataclass
 class OrchestratorConfig:
     """Orchestrator configuration."""
@@ -128,6 +143,11 @@ class OrchestratorConfig:
     symbols: List[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT"])
     initial_capital: float = 100000.0
     base_currency: str = "USDT"
+
+    # Exchange settings
+    exchange: ExchangeType = ExchangeType.ALPACA  # Default to Alpaca (US-friendly)
+    alpaca_api_key: str = ""
+    alpaca_api_secret: str = ""
 
     # Component flags
     enable_api: bool = True
@@ -283,6 +303,7 @@ class TradingOrchestrator:
         self.live_data: Optional[LiveDataManager] = None
         self.api_server: Optional[RESTAPIServer] = None
         self.exchange: Optional[BinanceConnector] = None
+        self.alpaca_client: Optional[AlpacaClient] = None  # Alpaca support
         self.strategies: Optional[StrategyEnsemble] = None
         self.rl_agent: Optional[PPOAgent] = None
 
@@ -358,7 +379,20 @@ class TradingOrchestrator:
 
             # 5. Initialize exchange connector
             print("\n[5/7] Initializing exchange connector...")
-            if create_binance_connector:
+            if self.config.exchange == ExchangeType.ALPACA and create_alpaca_client:
+                # Use Alpaca (US-friendly)
+                paper = self.config.mode != TradingMode.LIVE
+                self.alpaca_client = create_alpaca_client(
+                    api_key=self.config.alpaca_api_key,
+                    api_secret=self.config.alpaca_api_secret,
+                    paper=paper
+                )
+                if self.alpaca_client.connect():
+                    env = "paper" if paper else "live"
+                    print(f"      ✓ Connected to Alpaca ({env})")
+                else:
+                    print("      ⚠ Alpaca connection failed (check credentials)")
+            elif self.config.exchange == ExchangeType.BINANCE and create_binance_connector:
                 testnet = self.config.mode != TradingMode.LIVE
                 self.exchange = create_binance_connector(testnet=testnet)
                 if self.exchange.connect():
@@ -756,13 +790,35 @@ def create_orchestrator(
     mode: str = "paper",
     symbols: Optional[List[str]] = None,
     initial_capital: float = 100000.0,
+    exchange: str = "alpaca",
+    alpaca_api_key: str = "",
+    alpaca_api_secret: str = "",
     **kwargs
 ) -> TradingOrchestrator:
-    """Create trading orchestrator."""
+    """Create trading orchestrator.
+
+    Args:
+        mode: Trading mode (paper, live, backtest, research)
+        symbols: List of trading symbols
+        initial_capital: Starting capital
+        exchange: Exchange type (alpaca, binance, coinbase)
+        alpaca_api_key: Alpaca API key
+        alpaca_api_secret: Alpaca API secret
+    """
+    # Default symbols based on exchange
+    if symbols is None:
+        if exchange == "alpaca":
+            symbols = ["AAPL", "SPY", "BTC/USD"]  # Alpaca symbols
+        else:
+            symbols = ["BTC/USDT", "ETH/USDT"]  # Binance symbols
+
     config = OrchestratorConfig(
         mode=TradingMode(mode),
-        symbols=symbols or ["BTC/USDT", "ETH/USDT"],
+        symbols=symbols,
         initial_capital=initial_capital,
+        exchange=ExchangeType(exchange),
+        alpaca_api_key=alpaca_api_key,
+        alpaca_api_secret=alpaca_api_secret,
         **kwargs
     )
     return TradingOrchestrator(config)
