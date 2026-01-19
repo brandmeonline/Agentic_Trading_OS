@@ -115,21 +115,21 @@
 
 ### HIGH PRIORITY (Score < 5, High Impact)
 1. ✅ Real-time Updates (6 → 8) - DONE
-2. 🔄 Price Alerts (3 → 9) - IN PROGRESS
-3. 🔄 Webhook Support (2 → 9) - IN PROGRESS
-4. 🔄 Technical Indicators (4 → 8) - NEXT
-5. 🔄 Email/Push Notifications (2 → 8) - NEXT
+2. ✅ Price Alerts (3 → 9) - DONE (core/alerts.py)
+3. ✅ Webhook Support (2 → 9) - DONE (Discord/Slack/Telegram)
+4. ✅ Technical Indicators (4 → 8) - DONE (core/indicators.py - 13 indicators)
+5. ✅ Email/Push Notifications (2 → 8) - DONE (alerts system)
 
 ### MEDIUM PRIORITY (Score 5-6, Medium Impact)
-6. Strategy Sharing (0 → 7)
-7. Signal Marketplace (0 → 7)
-8. Copy Trading (0 → 6)
-9. Leaderboards (0 → 6)
-10. Drawing Tools (2 → 6)
+6. ✅ Strategy Sharing (0 → 7) - DONE (core/marketplace.py)
+7. ✅ Signal Marketplace (0 → 7) - DONE (signals API)
+8. ✅ Copy Trading (0 → 6) - DONE (copy trading API)
+9. ✅ Leaderboards (0 → 6) - DONE (leaderboard page)
+10. 🔄 Drawing Tools (2 → 6) - PENDING
 
 ### LOW PRIORITY (Nice to have)
-11. Community Forum (0 → 5)
-12. Mobile App (separate project)
+11. 🔄 Community Forum (0 → 5) - PENDING
+12. 🔄 Mobile App (separate project)
 
 ---
 

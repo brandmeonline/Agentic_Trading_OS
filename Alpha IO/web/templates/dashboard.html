@@ -47,7 +47,7 @@
 
     <!-- Main Content Grid -->
     <div class="dashboard-grid">
-        <!-- Price Chart -->
+        <!-- Price Chart with Indicators -->
         <div class="card chart-card">
             <div class="card-header">
                 <h2>Price Chart</h2>
@@ -55,12 +55,42 @@
                     <select id="chart-symbol">
                         <option value="AAPL">AAPL</option>
                         <option value="SPY">SPY</option>
+                        <option value="TSLA">TSLA</option>
+                        <option value="MSFT">MSFT</option>
                         <option value="BTC/USD">BTC/USD</option>
+                        <option value="ETH/USD">ETH/USD</option>
                     </select>
+                    <div class="indicator-dropdown">
+                        <button class="btn btn-sm btn-secondary" id="indicator-btn">Indicators &#9660;</button>
+                        <div class="indicator-menu" id="indicator-menu">
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Trend</span>
+                                <label><input type="checkbox" data-indicator="sma" checked> SMA (20)</label>
+                                <label><input type="checkbox" data-indicator="ema"> EMA (20)</label>
+                                <label><input type="checkbox" data-indicator="macd"> MACD</label>
+                            </div>
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Momentum</span>
+                                <label><input type="checkbox" data-indicator="rsi"> RSI (14)</label>
+                                <label><input type="checkbox" data-indicator="stochastic"> Stochastic</label>
+                            </div>
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Volatility</span>
+                                <label><input type="checkbox" data-indicator="bollinger"> Bollinger Bands</label>
+                                <label><input type="checkbox" data-indicator="atr"> ATR (14)</label>
+                            </div>
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Volume</span>
+                                <label><input type="checkbox" data-indicator="obv"> OBV</label>
+                                <label><input type="checkbox" data-indicator="vwap"> VWAP</label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="card-body">
+            <div class="card-body chart-container">
                 <canvas id="priceChart"></canvas>
+                <canvas id="indicatorChart" class="indicator-sub-chart" style="display: none;"></canvas>
             </div>
         </div>
 
@@ -183,9 +213,29 @@
 
 {% block scripts %}
 <script>
+    // Chart instances
+    let priceChart = null;
+    let indicatorChart = null;
+    let currentSymbol = 'AAPL';
+    let activeIndicators = ['sma'];
+
+    // Indicator colors
+    const indicatorColors = {
+        sma: '#00bcd4',
+        ema: '#ff9800',
+        macd: '#9c27b0',
+        rsi: '#4caf50',
+        stochastic: '#2196f3',
+        bollinger: '#e91e63',
+        atr: '#795548',
+        obv: '#607d8b',
+        vwap: '#ff5722'
+    };
+
     // Initialize dashboard
     document.addEventListener('DOMContentLoaded', function() {
         initPriceChart();
+        initIndicatorDropdown();
         startRealTimeUpdates();
         loadAccountInfo();
         loadPositions();
@@ -193,7 +243,233 @@
         // Refresh data periodically
         setInterval(loadAccountInfo, 5000);
         setInterval(loadPositions, 3000);
+
+        // Symbol change handler
+        document.getElementById('chart-symbol').addEventListener('change', function(e) {
+            currentSymbol = e.target.value;
+            updateChartWithIndicators();
+        });
     });
+
+    function initIndicatorDropdown() {
+        const btn = document.getElementById('indicator-btn');
+        const menu = document.getElementById('indicator-menu');
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            menu.classList.remove('show');
+        });
+
+        menu.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        // Handle indicator checkbox changes
+        menu.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const indicator = this.dataset.indicator;
+                if (this.checked) {
+                    if (!activeIndicators.includes(indicator)) {
+                        activeIndicators.push(indicator);
+                    }
+                } else {
+                    activeIndicators = activeIndicators.filter(i => i !== indicator);
+                }
+                updateChartWithIndicators();
+            });
+        });
+    }
+
+    function updateChartWithIndicators() {
+        const overlayIndicators = activeIndicators.filter(i => ['sma', 'ema', 'bollinger'].includes(i));
+        const subchartIndicators = activeIndicators.filter(i => ['rsi', 'macd', 'stochastic', 'atr', 'obv', 'vwap'].includes(i));
+
+        // Show/hide subchart
+        const subchartCanvas = document.getElementById('indicatorChart');
+        if (subchartIndicators.length > 0) {
+            subchartCanvas.style.display = 'block';
+        } else {
+            subchartCanvas.style.display = 'none';
+        }
+
+        // Fetch indicator data
+        if (activeIndicators.length === 0) {
+            return;
+        }
+
+        const indicatorQuery = activeIndicators.join(',');
+        fetch(`/api/indicators/chart/${encodeURIComponent(currentSymbol)}?indicators=${indicatorQuery}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderIndicatorsOnChart(data.indicators, overlayIndicators, subchartIndicators);
+                }
+            })
+            .catch(err => console.error('Failed to load indicators:', err));
+    }
+
+    function renderIndicatorsOnChart(indicators, overlays, subcharts) {
+        if (!priceChart) return;
+
+        // Remove existing indicator datasets (keep only price)
+        while (priceChart.data.datasets.length > 1) {
+            priceChart.data.datasets.pop();
+        }
+
+        // Add overlay indicators to price chart
+        overlays.forEach(indName => {
+            const ind = indicators[indName];
+            if (!ind) return;
+
+            if (indName === 'bollinger' && ind.upper_band && ind.lower_band) {
+                // Bollinger bands - upper, middle, lower
+                priceChart.data.datasets.push({
+                    label: 'BB Upper',
+                    data: ind.upper_band,
+                    borderColor: indicatorColors.bollinger,
+                    borderWidth: 1,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                });
+                priceChart.data.datasets.push({
+                    label: 'BB Lower',
+                    data: ind.lower_band,
+                    borderColor: indicatorColors.bollinger,
+                    borderWidth: 1,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                });
+            } else {
+                priceChart.data.datasets.push({
+                    label: ind.name,
+                    data: ind.values,
+                    borderColor: indicatorColors[indName] || '#888',
+                    borderWidth: 2,
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                });
+            }
+        });
+
+        priceChart.update('none');
+
+        // Render subchart indicators
+        if (subcharts.length > 0) {
+            renderSubchartIndicators(indicators, subcharts);
+        }
+    }
+
+    function renderSubchartIndicators(indicators, subcharts) {
+        const ctx = document.getElementById('indicatorChart').getContext('2d');
+        const labels = priceChart.data.labels;
+
+        // Use first subchart indicator for display
+        const indName = subcharts[0];
+        const ind = indicators[indName];
+        if (!ind) return;
+
+        const datasets = [];
+
+        if (indName === 'macd') {
+            datasets.push({
+                label: 'MACD',
+                data: ind.values,
+                borderColor: indicatorColors.macd,
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+            });
+            if (ind.signal_line) {
+                datasets.push({
+                    label: 'Signal',
+                    data: ind.signal_line,
+                    borderColor: '#ff9800',
+                    borderWidth: 1,
+                    fill: false,
+                    pointRadius: 0
+                });
+            }
+            if (ind.histogram) {
+                datasets.push({
+                    label: 'Histogram',
+                    data: ind.histogram,
+                    type: 'bar',
+                    backgroundColor: ind.histogram.map(v => v >= 0 ? 'rgba(76, 175, 80, 0.5)' : 'rgba(244, 67, 54, 0.5)')
+                });
+            }
+        } else if (indName === 'stochastic') {
+            datasets.push({
+                label: '%K',
+                data: ind.values,
+                borderColor: indicatorColors.stochastic,
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+            });
+            if (ind.signal_line) {
+                datasets.push({
+                    label: '%D',
+                    data: ind.signal_line,
+                    borderColor: '#ff9800',
+                    borderWidth: 1,
+                    fill: false,
+                    pointRadius: 0
+                });
+            }
+        } else {
+            datasets.push({
+                label: ind.name,
+                data: ind.values,
+                borderColor: indicatorColors[indName] || '#888',
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+            });
+        }
+
+        // Destroy existing chart if any
+        if (indicatorChart) {
+            indicatorChart.destroy();
+        }
+
+        // Create new subchart
+        indicatorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#e0e0e0', font: { size: 10 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: '#888' }
+                    }
+                }
+            }
+        });
+    }
 
     function loadAccountInfo() {
         fetch('/api/account')

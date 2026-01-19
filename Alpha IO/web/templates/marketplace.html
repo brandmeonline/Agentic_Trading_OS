@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+
+{% block title %}Strategy Marketplace - Agentic Trading OS{% endblock %}
+{% block page_title %}Strategy Marketplace{% endblock %}
+
+{% block content %}
+<div class="marketplace-page">
+    <!-- Search & Filters -->
+    <div class="marketplace-header">
+        <div class="search-box">
+            <input type="text" id="search-strategies" placeholder="Search strategies..." class="search-input">
+            <button class="btn btn-primary" onclick="searchStrategies()">Search</button>
+        </div>
+        <div class="filter-controls">
+            <select id="filter-category" onchange="filterStrategies()">
+                <option value="">All Categories</option>
+                <option value="momentum">Momentum</option>
+                <option value="trend_following">Trend Following</option>
+                <option value="mean_reversion">Mean Reversion</option>
+                <option value="breakout">Breakout</option>
+                <option value="scalping">Scalping</option>
+                <option value="swing">Swing Trading</option>
+                <option value="ai_ml">AI/ML</option>
+            </select>
+            <select id="filter-sort" onchange="filterStrategies()">
+                <option value="followers">Most Popular</option>
+                <option value="return">Best Returns</option>
+                <option value="rating">Highest Rated</option>
+                <option value="copiers">Most Copied</option>
+                <option value="newest">Newest</option>
+            </select>
+            <button class="btn btn-secondary" onclick="showCreateModal()">+ Share Strategy</button>
+        </div>
+    </div>
+
+    <!-- Featured Strategies -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Featured Strategies</h2>
+            <a href="#" class="view-all">View All</a>
+        </div>
+        <div class="card-body">
+            <div class="featured-grid" id="featured-strategies">
+                <div class="empty-state">
+                    <p>Loading featured strategies...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- All Strategies Grid -->
+    <div class="strategies-section">
+        <div class="section-header">
+            <h2>Browse Strategies</h2>
+            <span class="strategy-count" id="strategy-count">0 strategies</span>
+        </div>
+        <div class="strategies-grid" id="strategies-grid">
+            <div class="empty-state">
+                <p>Loading strategies...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Performers Sidebar -->
+    <div class="marketplace-sidebar">
+        <div class="card">
+            <div class="card-header">
+                <h3>Top Performers</h3>
+            </div>
+            <div class="card-body">
+                <div class="top-list" id="top-performers">
+                    <div class="empty-state small">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Trending Now</h3>
+            </div>
+            <div class="card-body">
+                <div class="top-list" id="trending-strategies">
+                    <div class="empty-state small">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Strategy Modal -->
+<div class="modal" id="create-strategy-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Share Your Strategy</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="create-strategy-form" onsubmit="return createStrategy(event)">
+                <div class="form-group">
+                    <label>Strategy Name</label>
+                    <input type="text" id="strategy-name" placeholder="My Awesome Strategy" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="strategy-description" rows="3" placeholder="Describe your strategy..."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category</label>
+                        <select id="strategy-category">
+                            <option value="momentum">Momentum</option>
+                            <option value="trend_following">Trend Following</option>
+                            <option value="mean_reversion">Mean Reversion</option>
+                            <option value="breakout">Breakout</option>
+                            <option value="ai_ml">AI/ML</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility</label>
+                        <select id="strategy-visibility">
+                            <option value="public">Public</option>
+                            <option value="private">Private</option>
+                            <option value="premium">Premium</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Trading Symbols</label>
+                    <input type="text" id="strategy-symbols" placeholder="AAPL, SPY, BTC/USD">
+                </div>
+                <div class="form-group">
+                    <label>Tags (comma-separated)</label>
+                    <input type="text" id="strategy-tags" placeholder="momentum, stocks, swing">
+                </div>
+                <div class="form-group">
+                    <label>Price (0 = Free)</label>
+                    <input type="number" id="strategy-price" value="0" min="0" step="0.01">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Share Strategy</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadFeaturedStrategies();
+        loadStrategies();
+        loadTopPerformers();
+        loadTrending();
+    });
+
+    function loadFeaturedStrategies() {
+        fetch('/api/marketplace/featured')
+            .then(r => r.json())
+            .then(strategies => {
+                const container = document.getElementById('featured-strategies');
+                if (strategies.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <p>No featured strategies yet</p>
+                            <small>Be the first to share your strategy!</small>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = strategies.map(s => `
+                    <div class="featured-card" onclick="viewStrategy('${s.id}')">
+                        <div class="featured-header">
+                            <span class="category-badge">${s.category}</span>
+                            <span class="rating">${s.rating ? s.rating.toFixed(1) + ' &#9733;' : 'New'}</span>
+                        </div>
+                        <h4>${s.name}</h4>
+                        <p class="author">by ${s.author_name}</p>
+                        <div class="featured-stats">
+                            <span class="return ${s.performance.total_return >= 0 ? 'positive' : 'negative'}">
+                                ${s.performance.total_return >= 0 ? '+' : ''}${s.performance.total_return.toFixed(1)}%
+                            </span>
+                            <span class="followers">${s.followers} followers</span>
+                        </div>
+                    </div>
+                `).join('');
+            });
+    }
+
+    function loadStrategies() {
+        const category = document.getElementById('filter-category').value;
+        const sort = document.getElementById('filter-sort').value;
+        const search = document.getElementById('search-strategies').value;
+
+        let url = `/api/marketplace/strategies?sort=${sort}`;
+        if (category) url += `&category=${category}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+
+        fetch(url)
+            .then(r => r.json())
+            .then(strategies => {
+                const container = document.getElementById('strategies-grid');
+                document.getElementById('strategy-count').textContent = `${strategies.length} strategies`;
+
+                if (strategies.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <p>No strategies found</p>
+                            <small>Try different filters or share your own!</small>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = strategies.map(s => `
+                    <div class="strategy-card" onclick="viewStrategy('${s.id}')">
+                        <div class="strategy-header">
+                            <h4>${s.name}</h4>
+                            <span class="category-badge">${s.category}</span>
+                        </div>
+                        <p class="strategy-desc">${s.description || 'No description'}</p>
+                        <p class="strategy-author">by ${s.author_name}</p>
+                        <div class="strategy-tags">
+                            ${s.tags.slice(0, 3).map(t => `<span class="tag">${t}</span>`).join('')}
+                        </div>
+                        <div class="strategy-metrics">
+                            <div class="metric">
+                                <span class="metric-value ${s.performance.total_return >= 0 ? 'positive' : 'negative'}">
+                                    ${s.performance.total_return >= 0 ? '+' : ''}${s.performance.total_return.toFixed(1)}%
+                                </span>
+                                <span class="metric-label">Return</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-value">${s.performance.win_rate.toFixed(0)}%</span>
+                                <span class="metric-label">Win Rate</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-value">${s.performance.sharpe_ratio.toFixed(2)}</span>
+                                <span class="metric-label">Sharpe</span>
+                            </div>
+                        </div>
+                        <div class="strategy-footer">
+                            <span class="stat"><span class="icon">&#128101;</span> ${s.followers}</span>
+                            <span class="stat"><span class="icon">&#9733;</span> ${s.rating ? s.rating.toFixed(1) : '-'}</span>
+                            <span class="stat">${s.price > 0 ? '$' + s.price : 'Free'}</span>
+                        </div>
+                    </div>
+                `).join('');
+            });
+    }
+
+    function loadTopPerformers() {
+        fetch('/api/marketplace/top-performers')
+            .then(r => r.json())
+            .then(strategies => {
+                const container = document.getElementById('top-performers');
+                if (strategies.length === 0) {
+                    container.innerHTML = '<div class="empty-state small">No data</div>';
+                    return;
+                }
+
+                container.innerHTML = strategies.map((s, i) => `
+                    <div class="top-item" onclick="viewStrategy('${s.id}')">
+                        <span class="rank">#${i + 1}</span>
+                        <div class="top-info">
+                            <span class="top-name">${s.name}</span>
+                            <span class="top-author">${s.author_name}</span>
+                        </div>
+                        <span class="top-return ${s.performance.total_return >= 0 ? 'positive' : 'negative'}">
+                            ${s.performance.total_return >= 0 ? '+' : ''}${s.performance.total_return.toFixed(1)}%
+                        </span>
+                    </div>
+                `).join('');
+            });
+    }
+
+    function loadTrending() {
+        fetch('/api/marketplace/trending')
+            .then(r => r.json())
+            .then(strategies => {
+                const container = document.getElementById('trending-strategies');
+                if (strategies.length === 0) {
+                    container.innerHTML = '<div class="empty-state small">No data</div>';
+                    return;
+                }
+
+                container.innerHTML = strategies.map(s => `
+                    <div class="top-item" onclick="viewStrategy('${s.id}')">
+                        <div class="top-info">
+                            <span class="top-name">${s.name}</span>
+                            <span class="top-author">${s.author_name}</span>
+                        </div>
+                        <span class="views">${s.views} views</span>
+                    </div>
+                `).join('');
+            });
+    }
+
+    function searchStrategies() {
+        loadStrategies();
+    }
+
+    function filterStrategies() {
+        loadStrategies();
+    }
+
+    function viewStrategy(id) {
+        window.location.href = `/marketplace/strategy/${id}`;
+    }
+
+    function showCreateModal() {
+        document.getElementById('create-strategy-modal').classList.add('show');
+    }
+
+    function closeModal() {
+        document.getElementById('create-strategy-modal').classList.remove('show');
+    }
+
+    function createStrategy(e) {
+        e.preventDefault();
+
+        const data = {
+            name: document.getElementById('strategy-name').value,
+            description: document.getElementById('strategy-description').value,
+            category: document.getElementById('strategy-category').value,
+            visibility: document.getElementById('strategy-visibility').value,
+            symbols: document.getElementById('strategy-symbols').value.split(',').map(s => s.trim()).filter(s => s),
+            tags: document.getElementById('strategy-tags').value.split(',').map(s => s.trim()).filter(s => s),
+            price: parseFloat(document.getElementById('strategy-price').value) || 0
+        };
+
+        fetch('/api/marketplace/strategies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(r => r.json())
+        .then(result => {
+            if (result.success) {
+                closeModal();
+                loadStrategies();
+                alert('Strategy shared successfully!');
+            } else {
+                alert('Error: ' + result.error);
+            }
+        });
+
+        return false;
+    }
+
+    // Close modal on outside click
+    document.getElementById('create-strategy-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
+</script>
+{% endblock %}

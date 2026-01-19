@@ -920,6 +920,556 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             return jsonify({"success": False, "error": str(e)})
 
     # ==========================================================================
+    # Routes - Technical Indicators
+    # ==========================================================================
+
+    @app.route("/api/indicators")
+    @login_required
+    def api_list_indicators():
+        """List available technical indicators."""
+        try:
+            from core.indicators import get_indicator_calculator
+            calculator = get_indicator_calculator()
+            return jsonify(calculator.list_indicators())
+        except Exception as e:
+            return jsonify([])
+
+    @app.route("/api/indicators/calculate", methods=["POST"])
+    @login_required
+    def api_calculate_indicator():
+        """Calculate a technical indicator on OHLCV data."""
+        try:
+            from core.indicators import get_indicator_calculator
+            calculator = get_indicator_calculator()
+
+            data = request.get_json() or {}
+            indicator_name = data.get("indicator", "sma")
+            params = data.get("params", {})
+
+            # Get OHLCV data from request or use price history
+            ohlcv = data.get("ohlcv")
+
+            if not ohlcv:
+                # Use price history from state if symbol provided
+                symbol = data.get("symbol", "AAPL")
+                history = trading_state.price_history.get(symbol, [])
+
+                if not history:
+                    return jsonify({"success": False, "error": f"No data for {symbol}"})
+
+                # Build OHLCV from price history (simplified - close only for most)
+                prices = [h["price"] for h in history]
+                ohlcv = {
+                    "open": prices,
+                    "high": prices,
+                    "low": prices,
+                    "close": prices,
+                    "volume": [1000] * len(prices)  # Placeholder volume
+                }
+
+            result = calculator.calculate(indicator_name, ohlcv, **params)
+
+            return jsonify({
+                "success": True,
+                "indicator": {
+                    "name": result.name,
+                    "values": result.values,
+                    "upper_band": result.upper_band,
+                    "lower_band": result.lower_band,
+                    "signal_line": result.signal_line,
+                    "histogram": result.histogram
+                }
+            })
+
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/indicators/chart/<symbol>")
+    @login_required
+    def api_indicators_for_chart(symbol):
+        """Get indicator data formatted for chart overlay."""
+        try:
+            from core.indicators import get_indicator_calculator
+            calculator = get_indicator_calculator()
+
+            # Get requested indicators from query params
+            indicator_list = request.args.get("indicators", "sma,rsi").split(",")
+
+            # Get price history
+            history = trading_state.price_history.get(symbol, [])
+            if not history:
+                return jsonify({"success": False, "error": f"No data for {symbol}"})
+
+            prices = [h["price"] for h in history]
+            timestamps = [h["time"] for h in history]
+
+            ohlcv = {
+                "open": prices,
+                "high": prices,
+                "low": prices,
+                "close": prices,
+                "volume": [1000] * len(prices)
+            }
+
+            results = {}
+            for ind_name in indicator_list:
+                ind_name = ind_name.strip()
+                try:
+                    result = calculator.calculate(ind_name, ohlcv)
+                    results[ind_name] = {
+                        "name": result.name,
+                        "values": result.values,
+                        "upper_band": result.upper_band,
+                        "lower_band": result.lower_band,
+                        "signal_line": result.signal_line,
+                        "histogram": result.histogram,
+                        "timestamps": timestamps
+                    }
+                except:
+                    pass
+
+            return jsonify({
+                "success": True,
+                "symbol": symbol,
+                "indicators": results
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
+    # Routes - Strategy Marketplace
+    # ==========================================================================
+
+    @app.route("/marketplace")
+    @login_required
+    def marketplace():
+        """Strategy marketplace page."""
+        return render_template("marketplace.html", stats=trading_state.get_stats())
+
+    @app.route("/marketplace/strategy/<strategy_id>")
+    @login_required
+    def marketplace_strategy_detail(strategy_id):
+        """Strategy detail page."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            strategy = mp.get_strategy(strategy_id)
+            if strategy:
+                return render_template("strategy_detail.html",
+                                     strategy=strategy, stats=trading_state.get_stats())
+        except:
+            pass
+        return redirect(url_for("marketplace"))
+
+    @app.route("/leaderboard")
+    @login_required
+    def leaderboard():
+        """Trader leaderboard page."""
+        return render_template("leaderboard.html", stats=trading_state.get_stats())
+
+    @app.route("/api/marketplace/strategies", methods=["GET"])
+    @login_required
+    def api_list_strategies():
+        """List strategies in marketplace."""
+        try:
+            from core.marketplace import get_marketplace, StrategyCategory, StrategyVisibility
+            mp = get_marketplace()
+
+            category = request.args.get("category")
+            search = request.args.get("search")
+            sort_by = request.args.get("sort", "followers")
+            limit = request.args.get("limit", 50, type=int)
+
+            cat_enum = None
+            if category:
+                try:
+                    cat_enum = StrategyCategory(category)
+                except:
+                    pass
+
+            strategies = mp.list_strategies(
+                category=cat_enum,
+                search=search,
+                sort_by=sort_by,
+                limit=limit
+            )
+
+            return jsonify([{
+                "id": s.id,
+                "name": s.name,
+                "description": s.description,
+                "author_name": s.author_name,
+                "category": s.category.value,
+                "tags": s.tags,
+                "symbols": s.symbols,
+                "followers": s.followers,
+                "copiers": s.copiers,
+                "rating": s.rating,
+                "rating_count": s.rating_count,
+                "views": s.views,
+                "price": s.price,
+                "performance": {
+                    "total_return": s.performance.total_return,
+                    "monthly_return": s.performance.monthly_return,
+                    "win_rate": s.performance.win_rate,
+                    "sharpe_ratio": s.performance.sharpe_ratio,
+                    "max_drawdown": s.performance.max_drawdown,
+                    "total_trades": s.performance.total_trades
+                }
+            } for s in strategies])
+
+        except Exception as e:
+            return jsonify([])
+
+    @app.route("/api/marketplace/strategies", methods=["POST"])
+    @login_required
+    def api_create_strategy():
+        """Create a new strategy."""
+        try:
+            from core.marketplace import get_marketplace, StrategyCategory, StrategyVisibility
+            mp = get_marketplace()
+
+            data = request.get_json() or {}
+
+            category = StrategyCategory(data.get("category", "other"))
+            visibility = StrategyVisibility(data.get("visibility", "public"))
+
+            strategy = mp.create_strategy(
+                name=data.get("name", "New Strategy"),
+                description=data.get("description", ""),
+                author_id=session.get("username", "admin"),
+                author_name=session.get("username", "Admin"),
+                category=category,
+                visibility=visibility,
+                symbols=data.get("symbols", []),
+                tags=data.get("tags", []),
+                config=data.get("config", {}),
+                price=float(data.get("price", 0))
+            )
+
+            return jsonify({"success": True, "strategy_id": strategy.id})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/marketplace/strategies/<strategy_id>", methods=["GET"])
+    @login_required
+    def api_get_strategy(strategy_id):
+        """Get strategy details."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            strategy = mp.get_strategy(strategy_id)
+
+            if not strategy:
+                return jsonify({"success": False, "error": "Strategy not found"})
+
+            return jsonify({
+                "success": True,
+                "strategy": {
+                    "id": strategy.id,
+                    "name": strategy.name,
+                    "description": strategy.description,
+                    "author_id": strategy.author_id,
+                    "author_name": strategy.author_name,
+                    "category": strategy.category.value,
+                    "visibility": strategy.visibility.value,
+                    "tags": strategy.tags,
+                    "symbols": strategy.symbols,
+                    "timeframe": strategy.timeframe,
+                    "config": strategy.config,
+                    "followers": strategy.followers,
+                    "copiers": strategy.copiers,
+                    "likes": strategy.likes,
+                    "views": strategy.views,
+                    "rating": strategy.rating,
+                    "rating_count": strategy.rating_count,
+                    "price": strategy.price,
+                    "created_at": strategy.created_at,
+                    "performance": {
+                        "total_return": strategy.performance.total_return,
+                        "monthly_return": strategy.performance.monthly_return,
+                        "win_rate": strategy.performance.win_rate,
+                        "sharpe_ratio": strategy.performance.sharpe_ratio,
+                        "max_drawdown": strategy.performance.max_drawdown,
+                        "total_trades": strategy.performance.total_trades,
+                        "profitable_trades": strategy.performance.profitable_trades,
+                        "profit_factor": strategy.performance.profit_factor
+                    }
+                }
+            })
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/marketplace/strategies/<strategy_id>/follow", methods=["POST"])
+    @login_required
+    def api_follow_strategy(strategy_id):
+        """Follow a strategy."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            success = mp.follow_strategy(strategy_id, session.get("username", ""))
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/marketplace/strategies/<strategy_id>/like", methods=["POST"])
+    @login_required
+    def api_like_strategy(strategy_id):
+        """Like a strategy."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            success = mp.like_strategy(strategy_id)
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/marketplace/strategies/<strategy_id>/rate", methods=["POST"])
+    @login_required
+    def api_rate_strategy(strategy_id):
+        """Rate a strategy."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            data = request.get_json() or {}
+            rating = float(data.get("rating", 0))
+            success = mp.rate_strategy(strategy_id, rating)
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/marketplace/featured")
+    @login_required
+    def api_featured_strategies():
+        """Get featured strategies."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            strategies = mp.get_featured_strategies(limit=6)
+            return jsonify([{
+                "id": s.id,
+                "name": s.name,
+                "author_name": s.author_name,
+                "category": s.category.value,
+                "followers": s.followers,
+                "rating": s.rating,
+                "performance": {
+                    "total_return": s.performance.total_return,
+                    "win_rate": s.performance.win_rate
+                }
+            } for s in strategies])
+        except:
+            return jsonify([])
+
+    @app.route("/api/marketplace/trending")
+    @login_required
+    def api_trending_strategies():
+        """Get trending strategies."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            strategies = mp.get_trending(limit=10)
+            return jsonify([{
+                "id": s.id,
+                "name": s.name,
+                "author_name": s.author_name,
+                "views": s.views,
+                "performance": {"total_return": s.performance.total_return}
+            } for s in strategies])
+        except:
+            return jsonify([])
+
+    @app.route("/api/marketplace/top-performers")
+    @login_required
+    def api_top_performers():
+        """Get top performing strategies."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            strategies = mp.get_top_performers(limit=10)
+            return jsonify([{
+                "id": s.id,
+                "name": s.name,
+                "author_name": s.author_name,
+                "performance": {
+                    "total_return": s.performance.total_return,
+                    "sharpe_ratio": s.performance.sharpe_ratio
+                }
+            } for s in strategies])
+        except:
+            return jsonify([])
+
+    # ==========================================================================
+    # Routes - Leaderboard
+    # ==========================================================================
+
+    @app.route("/api/leaderboard")
+    @login_required
+    def api_leaderboard():
+        """Get trader leaderboard."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+
+            sort_by = request.args.get("sort", "return")
+            limit = request.args.get("limit", 100, type=int)
+
+            traders = mp.get_leaderboard(sort_by=sort_by, limit=limit)
+
+            return jsonify([{
+                "rank": t.rank_overall,
+                "id": t.id,
+                "username": t.username,
+                "display_name": t.display_name,
+                "total_return": t.total_return,
+                "monthly_return": t.monthly_return,
+                "win_rate": t.win_rate,
+                "sharpe_ratio": t.sharpe_ratio,
+                "total_trades": t.total_trades,
+                "followers": t.followers,
+                "copiers": t.copiers,
+                "badges": t.badges
+            } for t in traders])
+
+        except Exception as e:
+            return jsonify([])
+
+    # ==========================================================================
+    # Routes - Copy Trading
+    # ==========================================================================
+
+    @app.route("/api/copy-trading/setup", methods=["POST"])
+    @login_required
+    def api_setup_copy_trading():
+        """Set up copy trading."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+
+            data = request.get_json() or {}
+            leader_id = data.get("leader_id")
+            if not leader_id:
+                return jsonify({"success": False, "error": "Leader ID required"})
+
+            settings = mp.setup_copy_trading(
+                copier_id=session.get("username", "admin"),
+                leader_id=leader_id,
+                allocation_percent=float(data.get("allocation_percent", 10)),
+                max_position_size=float(data.get("max_position_size", 5000)),
+                copy_ratio=float(data.get("copy_ratio", 1.0)),
+                strategy_id=data.get("strategy_id", "")
+            )
+
+            return jsonify({"success": True, "settings_id": settings.id})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/copy-trading/settings")
+    @login_required
+    def api_copy_trading_settings():
+        """Get copy trading settings."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            settings = mp.get_copy_settings(session.get("username", "admin"))
+            return jsonify([{
+                "id": s.id,
+                "leader_id": s.leader_id,
+                "strategy_id": s.strategy_id,
+                "enabled": s.enabled,
+                "allocation_percent": s.allocation_percent,
+                "max_position_size": s.max_position_size,
+                "copy_ratio": s.copy_ratio,
+                "trades_copied": s.trades_copied,
+                "total_pnl": s.total_pnl
+            } for s in settings])
+        except:
+            return jsonify([])
+
+    @app.route("/api/copy-trading/<settings_id>/disable", methods=["POST"])
+    @login_required
+    def api_disable_copy_trading(settings_id):
+        """Disable copy trading."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+            success = mp.disable_copy_trading(settings_id)
+            return jsonify({"success": success})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
+    # Routes - Signals
+    # ==========================================================================
+
+    @app.route("/api/signals", methods=["GET"])
+    @login_required
+    def api_get_signals():
+        """Get trading signals."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+
+            symbol = request.args.get("symbol")
+            active_only = request.args.get("active", "true").lower() == "true"
+
+            signals = mp.get_signals(symbol=symbol, active_only=active_only)
+
+            return jsonify([{
+                "id": s.id,
+                "symbol": s.symbol,
+                "action": s.action,
+                "entry_price": s.entry_price,
+                "stop_loss": s.stop_loss,
+                "take_profit": s.take_profit,
+                "confidence": s.confidence,
+                "analysis": s.analysis,
+                "indicators_used": s.indicators_used,
+                "outcome": s.outcome,
+                "pnl_percent": s.pnl_percent,
+                "created_at": s.created_at,
+                "expires_at": s.expires_at
+            } for s in signals])
+
+        except Exception as e:
+            return jsonify([])
+
+    @app.route("/api/signals", methods=["POST"])
+    @login_required
+    def api_create_signal():
+        """Create a trading signal."""
+        try:
+            from core.marketplace import get_marketplace
+            mp = get_marketplace()
+
+            data = request.get_json() or {}
+
+            signal = mp.create_signal(
+                author_id=session.get("username", "admin"),
+                symbol=data.get("symbol", ""),
+                action=data.get("action", "BUY"),
+                entry_price=float(data.get("entry_price", 0)),
+                stop_loss=float(data.get("stop_loss", 0)),
+                take_profit=float(data.get("take_profit", 0)),
+                confidence=float(data.get("confidence", 75)),
+                analysis=data.get("analysis", ""),
+                indicators=data.get("indicators", []),
+                strategy_id=data.get("strategy_id", ""),
+                expires_hours=int(data.get("expires_hours", 24))
+            )
+
+            return jsonify({"success": True, "signal_id": signal.id})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # ==========================================================================
     # Server-Sent Events for Real-time Updates
     # ==========================================================================
 
