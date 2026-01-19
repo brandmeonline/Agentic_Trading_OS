@@ -269,3 +269,19 @@ try:
 except ImportError:
     StressTester = None
     TailRiskHedger = None
+
+# Unified Trading System
+try:
+    from core.unified_system import (
+        UnifiedTradingEngine, SystemConfig, SystemMode,
+        TradeSignal, SignalSource, SignalAggregator,
+        TradeExecutor, RiskController, create_trading_system
+    )
+    __all__.extend([
+        "UnifiedTradingEngine", "SystemConfig", "SystemMode",
+        "TradeSignal", "SignalSource", "SignalAggregator",
+        "TradeExecutor", "RiskController", "create_trading_system"
+    ])
+except ImportError:
+    UnifiedTradingEngine = None
+    create_trading_system = None
