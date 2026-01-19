@@ -138,11 +138,9 @@ Agentic_Trading_OS/
 
 | Document | Description |
 |----------|-------------|
+| [API Reference](Alpha%20IO/docs/README.md) | Full API documentation (78 endpoints) |
 | [Architecture Diagrams](Alpha%20IO/docs/ARCHITECTURE_DIAGRAMS.md) | System architecture, data flows, integrations |
-| [Readiness Assessment](Alpha%20IO/docs/READINESS_ASSESSMENT.md) | Production readiness checklist |
-| [Competitive Analysis](Alpha%20IO/docs/COMPETITIVE_ANALYSIS.md) | Comparison with QuantConnect, 3Commas, etc. |
-| [Installation Guide](Alpha%20IO/docs/INSTALL.md) | Detailed setup instructions |
-| [User Guide](Alpha%20IO/docs/USER_GUIDE.md) | How to use the platform |
+| [Readiness Assessment](Alpha%20IO/docs/READINESS_ASSESSMENT.md) | Production readiness, competitive analysis |
 
 ## Architecture
 
