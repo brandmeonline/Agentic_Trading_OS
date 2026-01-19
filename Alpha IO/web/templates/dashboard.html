@@ -1,0 +1,660 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Agentic Trading OS{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <!-- Quick Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon blue">&#128176;</div>
+            <div class="stat-info">
+                <span class="stat-label">Portfolio Value</span>
+                <span class="stat-value large" id="stat-portfolio">${{ "%.2f"|format(stats.current_capital) }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon {% if stats.total_pnl >= 0 %}green{% else %}red{% endif %}">
+                {% if stats.total_pnl >= 0 %}&#9650;{% else %}&#9660;{% endif %}
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">Total P&L</span>
+                <span class="stat-value large {% if stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}" id="stat-pnl">
+                    {% if stats.total_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(stats.total_pnl) }}
+                    <small>({{ "%.2f"|format(stats.pnl_percent) }}%)</small>
+                </span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon purple">&#128202;</div>
+            <div class="stat-info">
+                <span class="stat-label">Total Trades</span>
+                <span class="stat-value large" id="stat-trades">{{ stats.total_trades }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon orange">&#127919;</div>
+            <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value large" id="stat-winrate">{{ "%.1f"|format(stats.win_rate) }}%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="dashboard-grid">
+        <!-- Price Chart with Indicators -->
+        <div class="card chart-card">
+            <div class="card-header">
+                <h2>Price Chart</h2>
+                <div class="chart-controls">
+                    <select id="chart-symbol">
+                        <option value="AAPL">AAPL</option>
+                        <option value="SPY">SPY</option>
+                        <option value="TSLA">TSLA</option>
+                        <option value="MSFT">MSFT</option>
+                        <option value="BTC/USD">BTC/USD</option>
+                        <option value="ETH/USD">ETH/USD</option>
+                    </select>
+                    <div class="indicator-dropdown">
+                        <button class="btn btn-sm btn-secondary" id="indicator-btn">Indicators &#9660;</button>
+                        <div class="indicator-menu" id="indicator-menu">
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Trend</span>
+                                <label><input type="checkbox" data-indicator="sma" checked> SMA (20)</label>
+                                <label><input type="checkbox" data-indicator="ema"> EMA (20)</label>
+                                <label><input type="checkbox" data-indicator="macd"> MACD</label>
+                            </div>
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Momentum</span>
+                                <label><input type="checkbox" data-indicator="rsi"> RSI (14)</label>
+                                <label><input type="checkbox" data-indicator="stochastic"> Stochastic</label>
+                            </div>
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Volatility</span>
+                                <label><input type="checkbox" data-indicator="bollinger"> Bollinger Bands</label>
+                                <label><input type="checkbox" data-indicator="atr"> ATR (14)</label>
+                            </div>
+                            <div class="indicator-section">
+                                <span class="indicator-section-title">Volume</span>
+                                <label><input type="checkbox" data-indicator="obv"> OBV</label>
+                                <label><input type="checkbox" data-indicator="vwap"> VWAP</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body chart-container">
+                <canvas id="priceChart"></canvas>
+                <canvas id="indicatorChart" class="indicator-sub-chart" style="display: none;"></canvas>
+            </div>
+        </div>
+
+        <!-- Live Prices -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Live Prices</h2>
+                <span class="badge {% if stats.alpaca_connected %}badge-success{% else %}badge-warning{% endif %}" id="connection-badge">
+                    {% if stats.alpaca_connected %}Connected{% else %}Offline{% endif %}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="price-list" id="price-list">
+                    {% for symbol, price in stats.prices.items() %}
+                    <div class="price-item">
+                        <span class="symbol">{{ symbol }}</span>
+                        <span class="price">${{ "%.2f"|format(price) }}</span>
+                        <span class="change neutral">-</span>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <p>No price data available</p>
+                        <small>Connect to Alpaca in Admin panel</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Account Summary -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Account Summary</h2>
+            </div>
+            <div class="card-body">
+                <div class="account-stats" id="account-stats">
+                    <div class="account-item">
+                        <span class="account-label">Buying Power</span>
+                        <span class="account-value" id="buying-power">$0.00</span>
+                    </div>
+                    <div class="account-item">
+                        <span class="account-label">Cash</span>
+                        <span class="account-value" id="account-cash">$0.00</span>
+                    </div>
+                    <div class="account-item">
+                        <span class="account-label">Day P&L</span>
+                        <span class="account-value" id="day-pnl">$0.00</span>
+                    </div>
+                    <div class="account-item">
+                        <span class="account-label">Status</span>
+                        <span class="account-value" id="account-status">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Open Positions</h2>
+                <span class="badge">{{ stats.positions }}</span>
+            </div>
+            <div class="card-body">
+                <div class="positions-list" id="positions-list">
+                    {% if stats.positions > 0 %}
+                    <!-- Positions will be loaded dynamically -->
+                    {% else %}
+                    <div class="empty-state">
+                        <p>No open positions</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Trades -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Recent Trades</h2>
+                <a href="{{ url_for('trading') }}" class="btn btn-sm">View All</a>
+            </div>
+            <div class="card-body">
+                <div class="trades-list" id="trades-list">
+                    <div class="empty-state">
+                        <p>No trades yet</p>
+                        <small>Trades will appear here when executed</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Status Bar -->
+    <div class="status-bar">
+        <div class="status-item">
+            <span class="status-label">System Status</span>
+            <span class="status-value" id="status-system">
+                <span class="status-dot {% if stats.is_running %}running{% else %}stopped{% endif %}"></span>
+                {% if stats.is_running %}Running{% else %}Stopped{% endif %}
+            </span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Alpaca API</span>
+            <span class="status-value">
+                <span class="status-dot {% if stats.alpaca_connected %}running{% else %}stopped{% endif %}"></span>
+                {% if stats.alpaca_connected %}Connected{% else %}Disconnected{% endif %}
+            </span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Uptime</span>
+            <span class="status-value" id="status-uptime">{{ stats.uptime_formatted }}</span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Errors</span>
+            <span class="status-value {% if stats.errors > 0 %}error{% endif %}">{{ stats.errors }}</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Chart instances
+    let priceChart = null;
+    let indicatorChart = null;
+    let currentSymbol = 'AAPL';
+    let activeIndicators = ['sma'];
+
+    // Indicator colors
+    const indicatorColors = {
+        sma: '#00bcd4',
+        ema: '#ff9800',
+        macd: '#9c27b0',
+        rsi: '#4caf50',
+        stochastic: '#2196f3',
+        bollinger: '#e91e63',
+        atr: '#795548',
+        obv: '#607d8b',
+        vwap: '#ff5722'
+    };
+
+    // Initialize dashboard
+    document.addEventListener('DOMContentLoaded', function() {
+        initPriceChart();
+        initIndicatorDropdown();
+        startRealTimeUpdates();
+        loadAccountInfo();
+        loadPositions();
+
+        // Refresh data periodically
+        setInterval(loadAccountInfo, 5000);
+        setInterval(loadPositions, 3000);
+
+        // Symbol change handler
+        document.getElementById('chart-symbol').addEventListener('change', function(e) {
+            currentSymbol = e.target.value;
+            updateChartWithIndicators();
+        });
+    });
+
+    function initIndicatorDropdown() {
+        const btn = document.getElementById('indicator-btn');
+        const menu = document.getElementById('indicator-menu');
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            menu.classList.remove('show');
+        });
+
+        menu.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        // Handle indicator checkbox changes
+        menu.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const indicator = this.dataset.indicator;
+                if (this.checked) {
+                    if (!activeIndicators.includes(indicator)) {
+                        activeIndicators.push(indicator);
+                    }
+                } else {
+                    activeIndicators = activeIndicators.filter(i => i !== indicator);
+                }
+                updateChartWithIndicators();
+            });
+        });
+    }
+
+    function updateChartWithIndicators() {
+        const overlayIndicators = activeIndicators.filter(i => ['sma', 'ema', 'bollinger'].includes(i));
+        const subchartIndicators = activeIndicators.filter(i => ['rsi', 'macd', 'stochastic', 'atr', 'obv', 'vwap'].includes(i));
+
+        // Show/hide subchart
+        const subchartCanvas = document.getElementById('indicatorChart');
+        if (subchartIndicators.length > 0) {
+            subchartCanvas.style.display = 'block';
+        } else {
+            subchartCanvas.style.display = 'none';
+        }
+
+        // Fetch indicator data
+        if (activeIndicators.length === 0) {
+            return;
+        }
+
+        const indicatorQuery = activeIndicators.join(',');
+        fetch(`/api/indicators/chart/${encodeURIComponent(currentSymbol)}?indicators=${indicatorQuery}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderIndicatorsOnChart(data.indicators, overlayIndicators, subchartIndicators);
+                }
+            })
+            .catch(err => console.error('Failed to load indicators:', err));
+    }
+
+    function renderIndicatorsOnChart(indicators, overlays, subcharts) {
+        if (!priceChart) return;
+
+        // Remove existing indicator datasets (keep only price)
+        while (priceChart.data.datasets.length > 1) {
+            priceChart.data.datasets.pop();
+        }
+
+        // Add overlay indicators to price chart
+        overlays.forEach(indName => {
+            const ind = indicators[indName];
+            if (!ind) return;
+
+            if (indName === 'bollinger' && ind.upper_band && ind.lower_band) {
+                // Bollinger bands - upper, middle, lower
+                priceChart.data.datasets.push({
+                    label: 'BB Upper',
+                    data: ind.upper_band,
+                    borderColor: indicatorColors.bollinger,
+                    borderWidth: 1,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                });
+                priceChart.data.datasets.push({
+                    label: 'BB Lower',
+                    data: ind.lower_band,
+                    borderColor: indicatorColors.bollinger,
+                    borderWidth: 1,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                });
+            } else {
+                priceChart.data.datasets.push({
+                    label: ind.name,
+                    data: ind.values,
+                    borderColor: indicatorColors[indName] || '#888',
+                    borderWidth: 2,
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                });
+            }
+        });
+
+        priceChart.update('none');
+
+        // Render subchart indicators
+        if (subcharts.length > 0) {
+            renderSubchartIndicators(indicators, subcharts);
+        }
+    }
+
+    function renderSubchartIndicators(indicators, subcharts) {
+        const ctx = document.getElementById('indicatorChart').getContext('2d');
+        const labels = priceChart.data.labels;
+
+        // Use first subchart indicator for display
+        const indName = subcharts[0];
+        const ind = indicators[indName];
+        if (!ind) return;
+
+        const datasets = [];
+
+        if (indName === 'macd') {
+            datasets.push({
+                label: 'MACD',
+                data: ind.values,
+                borderColor: indicatorColors.macd,
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+            });
+            if (ind.signal_line) {
+                datasets.push({
+                    label: 'Signal',
+                    data: ind.signal_line,
+                    borderColor: '#ff9800',
+                    borderWidth: 1,
+                    fill: false,
+                    pointRadius: 0
+                });
+            }
+            if (ind.histogram) {
+                datasets.push({
+                    label: 'Histogram',
+                    data: ind.histogram,
+                    type: 'bar',
+                    backgroundColor: ind.histogram.map(v => v >= 0 ? 'rgba(76, 175, 80, 0.5)' : 'rgba(244, 67, 54, 0.5)')
+                });
+            }
+        } else if (indName === 'stochastic') {
+            datasets.push({
+                label: '%K',
+                data: ind.values,
+                borderColor: indicatorColors.stochastic,
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+            });
+            if (ind.signal_line) {
+                datasets.push({
+                    label: '%D',
+                    data: ind.signal_line,
+                    borderColor: '#ff9800',
+                    borderWidth: 1,
+                    fill: false,
+                    pointRadius: 0
+                });
+            }
+        } else {
+            datasets.push({
+                label: ind.name,
+                data: ind.values,
+                borderColor: indicatorColors[indName] || '#888',
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+            });
+        }
+
+        // Destroy existing chart if any
+        if (indicatorChart) {
+            indicatorChart.destroy();
+        }
+
+        // Create new subchart
+        indicatorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#e0e0e0', font: { size: 10 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: '#888' }
+                    }
+                }
+            }
+        });
+    }
+
+    function loadAccountInfo() {
+        fetch('/api/account')
+            .then(r => r.json())
+            .then(account => {
+                if (account && Object.keys(account).length > 0) {
+                    document.getElementById('buying-power').textContent =
+                        '$' + parseFloat(account.buying_power || 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+                    document.getElementById('account-cash').textContent =
+                        '$' + parseFloat(account.cash || 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+
+                    const dayPnl = parseFloat(account.equity || 0) - parseFloat(account.last_equity || 0);
+                    const dayPnlEl = document.getElementById('day-pnl');
+                    dayPnlEl.textContent = (dayPnl >= 0 ? '+' : '') + '$' + dayPnl.toLocaleString(undefined, {minimumFractionDigits: 2});
+                    dayPnlEl.className = 'account-value ' + (dayPnl >= 0 ? 'positive' : 'negative');
+
+                    document.getElementById('account-status').textContent = account.status || 'Unknown';
+
+                    // Update connection badge
+                    const badge = document.getElementById('connection-badge');
+                    badge.textContent = 'Connected';
+                    badge.className = 'badge badge-success';
+                }
+            })
+            .catch(err => {
+                // Silent fail - account might not be connected
+            });
+    }
+
+    function loadPositions() {
+        fetch('/api/alpaca-positions')
+            .then(r => r.json())
+            .then(positions => {
+                const list = document.getElementById('positions-list');
+                if (!list) return;
+
+                if (positions.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>No open positions</p></div>';
+                    return;
+                }
+
+                list.innerHTML = positions.map(p => {
+                    const pnl = parseFloat(p.unrealized_pl || 0);
+                    const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+                    return `
+                        <div class="position-item">
+                            <div class="position-symbol">${p.symbol}</div>
+                            <div class="position-qty">${p.qty} shares</div>
+                            <div class="position-value">$${parseFloat(p.market_value || 0).toLocaleString()}</div>
+                            <div class="position-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>
+                        </div>
+                    `;
+                }).join('');
+            })
+            .catch(err => console.error('Failed to load positions:', err));
+    }
+
+    // Real-time updates via Server-Sent Events (SSE)
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+
+    function startRealTimeUpdates() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        try {
+            eventSource = new EventSource('/api/stream');
+
+            eventSource.onopen = function() {
+                console.log('SSE connection established');
+                reconnectAttempts = 0;
+                updateConnectionStatus(true);
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleRealtimeUpdate(data);
+                } catch (e) {
+                    console.error('Failed to parse SSE message:', e);
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                console.error('SSE error:', err);
+                updateConnectionStatus(false);
+                eventSource.close();
+
+                // Attempt reconnection with exponential backoff
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    const delay = Math.pow(2, reconnectAttempts) * 1000;
+                    reconnectAttempts++;
+                    console.log(`Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})`);
+                    setTimeout(startRealTimeUpdates, delay);
+                }
+            };
+
+        } catch (e) {
+            console.error('Failed to create EventSource:', e);
+            updateConnectionStatus(false);
+        }
+    }
+
+    function handleRealtimeUpdate(data) {
+        // Update prices
+        if (data.prices) {
+            const priceList = document.getElementById('price-list');
+            if (priceList && Object.keys(data.prices).length > 0) {
+                priceList.innerHTML = Object.entries(data.prices).map(([symbol, price]) => `
+                    <div class="price-item">
+                        <span class="symbol">${symbol}</span>
+                        <span class="price">$${parseFloat(price).toFixed(2)}</span>
+                        <span class="change neutral">-</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Update stats
+        if (data.stats) {
+            const s = data.stats;
+            if (s.current_capital !== undefined) {
+                const portfolioEl = document.getElementById('stat-portfolio');
+                if (portfolioEl) portfolioEl.textContent = '$' + parseFloat(s.current_capital).toLocaleString(undefined, {minimumFractionDigits: 2});
+            }
+            if (s.total_pnl !== undefined) {
+                const pnlEl = document.getElementById('stat-pnl');
+                if (pnlEl) {
+                    const pnl = parseFloat(s.total_pnl);
+                    pnlEl.innerHTML = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} <small>(${parseFloat(s.pnl_percent || 0).toFixed(2)}%)</small>`;
+                    pnlEl.className = `stat-value large ${pnl >= 0 ? 'positive' : 'negative'}`;
+                }
+            }
+            if (s.total_trades !== undefined) {
+                const tradesEl = document.getElementById('stat-trades');
+                if (tradesEl) tradesEl.textContent = s.total_trades;
+            }
+            if (s.win_rate !== undefined) {
+                const winrateEl = document.getElementById('stat-winrate');
+                if (winrateEl) winrateEl.textContent = parseFloat(s.win_rate).toFixed(1) + '%';
+            }
+        }
+
+        // Update system status
+        if (data.is_running !== undefined) {
+            const statusEl = document.getElementById('status-system');
+            if (statusEl) {
+                statusEl.innerHTML = `
+                    <span class="status-dot ${data.is_running ? 'running' : 'stopped'}"></span>
+                    ${data.is_running ? 'Running' : 'Stopped'}
+                `;
+            }
+        }
+
+        // Update recent trades
+        if (data.recent_trades && data.recent_trades.length > 0) {
+            const tradesList = document.getElementById('trades-list');
+            if (tradesList) {
+                tradesList.innerHTML = data.recent_trades.slice(0, 5).map(t => `
+                    <div class="trade-item">
+                        <span class="trade-symbol">${t.symbol}</span>
+                        <span class="trade-side ${t.side === 'buy' ? 'positive' : 'negative'}">${t.side.toUpperCase()}</span>
+                        <span class="trade-qty">${t.qty}</span>
+                        <span class="trade-price">$${parseFloat(t.price).toFixed(2)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+    }
+
+    function updateConnectionStatus(connected) {
+        const badge = document.getElementById('connection-badge');
+        if (badge) {
+            badge.textContent = connected ? 'Live' : 'Offline';
+            badge.className = `badge ${connected ? 'badge-success' : 'badge-warning'}`;
+        }
+    }
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
+</script>
+{% endblock %}

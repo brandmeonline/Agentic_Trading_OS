@@ -1,0 +1,547 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Agentic Trading OS{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+
+{% block content %}
+<div class="analytics-page">
+    <!-- Performance Overview -->
+    <div class="stats-grid">
+        <div class="stat-card large">
+            <div class="stat-info">
+                <span class="stat-label">Total Return</span>
+                <span class="stat-value xlarge {% if stats.pnl_percent >= 0 %}positive{% else %}negative{% endif %}">
+                    {% if stats.pnl_percent >= 0 %}+{% endif %}{{ "%.2f"|format(stats.pnl_percent) }}%
+                </span>
+                <span class="stat-subtext">${{ "%.2f"|format(stats.total_pnl) }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value large">{{ "%.1f"|format(stats.win_rate) }}%</span>
+                <span class="stat-subtext">{{ stats.winning_trades }}/{{ stats.total_trades }} trades</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Total Trades</span>
+                <span class="stat-value large">{{ stats.total_trades }}</span>
+                <span class="stat-subtext">
+                    <span class="positive">{{ stats.winning_trades }} wins</span> /
+                    <span class="negative">{{ stats.losing_trades }} losses</span>
+                </span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Sharpe Ratio</span>
+                <span class="stat-value large">-</span>
+                <span class="stat-subtext">Calculated daily</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="analytics-grid">
+        <!-- Equity Curve -->
+        <div class="card chart-card wide">
+            <div class="card-header">
+                <h2>Equity Curve</h2>
+                <div class="chart-controls">
+                    <button class="btn btn-sm active" data-period="1d">1D</button>
+                    <button class="btn btn-sm" data-period="1w">1W</button>
+                    <button class="btn btn-sm" data-period="1m">1M</button>
+                    <button class="btn btn-sm" data-period="all">All</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="equityChart" height="300"></canvas>
+            </div>
+        </div>
+
+        <!-- P&L Distribution -->
+        <div class="card">
+            <div class="card-header">
+                <h2>P&L Distribution</h2>
+            </div>
+            <div class="card-body">
+                <canvas id="pnlChart" height="250"></canvas>
+            </div>
+        </div>
+
+        <!-- Trade Distribution -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Trades by Symbol</h2>
+            </div>
+            <div class="card-body">
+                <canvas id="symbolChart" height="250"></canvas>
+            </div>
+        </div>
+
+        <!-- Win/Loss Breakdown -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Win/Loss Analysis</h2>
+            </div>
+            <div class="card-body">
+                <div class="winloss-breakdown">
+                    <div class="wl-item">
+                        <span class="wl-label">Avg Win</span>
+                        <span class="wl-value positive">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Avg Loss</span>
+                        <span class="wl-value negative">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Largest Win</span>
+                        <span class="wl-value positive">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Largest Loss</span>
+                        <span class="wl-value negative">$0.00</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Profit Factor</span>
+                        <span class="wl-value">-</span>
+                    </div>
+                    <div class="wl-item">
+                        <span class="wl-label">Expectancy</span>
+                        <span class="wl-value">$0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drawdown -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Drawdown</h2>
+            </div>
+            <div class="card-body">
+                <canvas id="drawdownChart" height="200"></canvas>
+                <div class="drawdown-stats">
+                    <div class="dd-item">
+                        <span class="dd-label">Max Drawdown</span>
+                        <span class="dd-value negative">0.00%</span>
+                    </div>
+                    <div class="dd-item">
+                        <span class="dd-label">Current Drawdown</span>
+                        <span class="dd-value">0.00%</span>
+                    </div>
+                    <div class="dd-item">
+                        <span class="dd-label">Recovery Time</span>
+                        <span class="dd-value">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Monthly Returns -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Monthly Returns</h2>
+            </div>
+            <div class="card-body">
+                <div class="monthly-returns">
+                    <div class="month-item">
+                        <span class="month-name">Jan</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Feb</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Mar</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Apr</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">May</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                    <div class="month-item">
+                        <span class="month-name">Jun</span>
+                        <span class="month-value neutral">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Chart instances
+    let equityChart = null;
+    let pnlChart = null;
+    let symbolChart = null;
+    let drawdownChart = null;
+    let analyticsData = { trades: [], stats: null };
+
+    // Initialize charts and load data
+    document.addEventListener('DOMContentLoaded', function() {
+        initCharts();
+        loadAnalyticsData();
+
+        // Period button handlers
+        document.querySelectorAll('.chart-controls .btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelector('.chart-controls .btn.active').classList.remove('active');
+                this.classList.add('active');
+                updateEquityChart(this.dataset.period);
+            });
+        });
+    });
+
+    function loadAnalyticsData() {
+        // Fetch trades and stats in parallel
+        Promise.all([
+            fetch('/api/trades?limit=500').then(r => r.json()),
+            fetch('/api/stats').then(r => r.json())
+        ])
+        .then(([trades, stats]) => {
+            analyticsData.trades = Array.isArray(trades) ? trades : [];
+            analyticsData.stats = stats;
+
+            // Process and update all charts
+            processTradeData();
+            updateAllCharts();
+            updateWinLossBreakdown();
+            updateMonthlyReturns();
+        })
+        .catch(err => console.error('Failed to load analytics data:', err));
+    }
+
+    function processTradeData() {
+        const trades = analyticsData.trades;
+        if (!trades.length) return;
+
+        // Calculate equity curve
+        const initialCapital = 100000;
+        let equity = initialCapital;
+        analyticsData.equityCurve = [{ date: 'Start', value: initialCapital }];
+
+        trades.forEach(t => {
+            equity += (t.pnl || 0);
+            analyticsData.equityCurve.push({
+                date: t.time || new Date().toISOString(),
+                value: equity
+            });
+        });
+
+        // Calculate P&L distribution
+        const pnlBuckets = {
+            '<-5%': 0, '-5 to -2%': 0, '-2 to 0%': 0,
+            '0 to 2%': 0, '2 to 5%': 0, '>5%': 0
+        };
+
+        trades.forEach(t => {
+            const pnlPct = t.pnl_pct || (t.pnl / (t.price * t.qty) * 100) || 0;
+            if (pnlPct < -5) pnlBuckets['<-5%']++;
+            else if (pnlPct < -2) pnlBuckets['-5 to -2%']++;
+            else if (pnlPct < 0) pnlBuckets['-2 to 0%']++;
+            else if (pnlPct < 2) pnlBuckets['0 to 2%']++;
+            else if (pnlPct < 5) pnlBuckets['2 to 5%']++;
+            else pnlBuckets['>5%']++;
+        });
+        analyticsData.pnlDistribution = pnlBuckets;
+
+        // Calculate symbol distribution
+        const symbolCounts = {};
+        trades.forEach(t => {
+            symbolCounts[t.symbol] = (symbolCounts[t.symbol] || 0) + 1;
+        });
+        analyticsData.symbolDistribution = symbolCounts;
+
+        // Calculate drawdown
+        let peak = initialCapital;
+        analyticsData.drawdown = analyticsData.equityCurve.map(point => {
+            if (point.value > peak) peak = point.value;
+            const dd = ((peak - point.value) / peak) * 100;
+            return { date: point.date, value: dd };
+        });
+
+        analyticsData.maxDrawdown = Math.max(...analyticsData.drawdown.map(d => d.value));
+        analyticsData.currentDrawdown = analyticsData.drawdown.length > 0 ?
+            analyticsData.drawdown[analyticsData.drawdown.length - 1].value : 0;
+    }
+
+    function initCharts() {
+        // Equity Chart
+        const eqCtx = document.getElementById('equityChart').getContext('2d');
+        equityChart = new Chart(eqCtx, {
+            type: 'line',
+            data: {
+                labels: ['Start'],
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: [100000],
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: false, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+
+        // P&L Distribution Chart
+        const pnlCtx = document.getElementById('pnlChart').getContext('2d');
+        pnlChart = new Chart(pnlCtx, {
+            type: 'bar',
+            data: {
+                labels: ['<-5%', '-5 to -2%', '-2 to 0%', '0 to 2%', '2 to 5%', '>5%'],
+                datasets: [{
+                    label: 'Trade Count',
+                    data: [0, 0, 0, 0, 0, 0],
+                    backgroundColor: ['#ef4444', '#f97316', '#fbbf24', '#84cc16', '#22c55e', '#10b981']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { grid: { color: 'rgba(255,255,255,0.05)' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+
+        // Symbol Distribution Chart
+        const symCtx = document.getElementById('symbolChart').getContext('2d');
+        symbolChart = new Chart(symCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['No trades'],
+                datasets: [{
+                    data: [1],
+                    backgroundColor: ['#6366f1']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { color: '#e0e0e0' } } }
+            }
+        });
+
+        // Drawdown Chart
+        const ddCtx = document.getElementById('drawdownChart').getContext('2d');
+        drawdownChart = new Chart(ddCtx, {
+            type: 'line',
+            data: {
+                labels: ['Start'],
+                datasets: [{
+                    label: 'Drawdown',
+                    data: [0],
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { reverse: true, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    function updateAllCharts() {
+        updateEquityChart('all');
+        updatePnlChart();
+        updateSymbolChart();
+        updateDrawdownChart();
+    }
+
+    function updateEquityChart(period) {
+        if (!analyticsData.equityCurve || !equityChart) return;
+
+        let data = analyticsData.equityCurve;
+
+        // Filter by period
+        const now = new Date();
+        if (period === '1d') {
+            const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
+            data = data.filter(d => new Date(d.date) >= dayAgo);
+        } else if (period === '1w') {
+            const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            data = data.filter(d => new Date(d.date) >= weekAgo);
+        } else if (period === '1m') {
+            const monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            data = data.filter(d => new Date(d.date) >= monthAgo);
+        }
+
+        if (data.length === 0) data = [{ date: 'No data', value: 100000 }];
+
+        equityChart.data.labels = data.map(d => {
+            if (d.date === 'Start' || d.date === 'No data') return d.date;
+            const date = new Date(d.date);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        equityChart.data.datasets[0].data = data.map(d => d.value);
+        equityChart.update('none');
+    }
+
+    function updatePnlChart() {
+        if (!analyticsData.pnlDistribution || !pnlChart) return;
+
+        const buckets = analyticsData.pnlDistribution;
+        pnlChart.data.datasets[0].data = Object.values(buckets);
+        pnlChart.update('none');
+    }
+
+    function updateSymbolChart() {
+        if (!analyticsData.symbolDistribution || !symbolChart) return;
+
+        const dist = analyticsData.symbolDistribution;
+        const symbols = Object.keys(dist);
+        const counts = Object.values(dist);
+
+        if (symbols.length === 0) {
+            symbolChart.data.labels = ['No trades'];
+            symbolChart.data.datasets[0].data = [1];
+            symbolChart.data.datasets[0].backgroundColor = ['#6366f1'];
+        } else {
+            const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#f97316'];
+            symbolChart.data.labels = symbols;
+            symbolChart.data.datasets[0].data = counts;
+            symbolChart.data.datasets[0].backgroundColor = symbols.map((_, i) => colors[i % colors.length]);
+        }
+        symbolChart.update('none');
+    }
+
+    function updateDrawdownChart() {
+        if (!analyticsData.drawdown || !drawdownChart) return;
+
+        const data = analyticsData.drawdown;
+        if (data.length === 0) return;
+
+        drawdownChart.data.labels = data.map(d => {
+            if (d.date === 'Start') return d.date;
+            const date = new Date(d.date);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        drawdownChart.data.datasets[0].data = data.map(d => d.value);
+        drawdownChart.update('none');
+
+        // Update drawdown stats
+        document.querySelector('.drawdown-stats .dd-item:nth-child(1) .dd-value').textContent =
+            analyticsData.maxDrawdown.toFixed(2) + '%';
+        document.querySelector('.drawdown-stats .dd-item:nth-child(2) .dd-value').textContent =
+            analyticsData.currentDrawdown.toFixed(2) + '%';
+    }
+
+    function updateWinLossBreakdown() {
+        const trades = analyticsData.trades;
+        if (!trades.length) return;
+
+        const wins = trades.filter(t => (t.pnl || 0) > 0);
+        const losses = trades.filter(t => (t.pnl || 0) < 0);
+
+        const avgWin = wins.length > 0 ? wins.reduce((sum, t) => sum + t.pnl, 0) / wins.length : 0;
+        const avgLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + t.pnl, 0) / losses.length : 0;
+        const largestWin = wins.length > 0 ? Math.max(...wins.map(t => t.pnl)) : 0;
+        const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.pnl)) : 0;
+
+        const totalWins = wins.reduce((sum, t) => sum + t.pnl, 0);
+        const totalLosses = Math.abs(losses.reduce((sum, t) => sum + t.pnl, 0));
+        const profitFactor = totalLosses > 0 ? (totalWins / totalLosses).toFixed(2) : '-';
+
+        const expectancy = trades.length > 0 ?
+            trades.reduce((sum, t) => sum + (t.pnl || 0), 0) / trades.length : 0;
+
+        const breakdown = document.querySelector('.winloss-breakdown');
+        if (breakdown) {
+            breakdown.innerHTML = `
+                <div class="wl-item">
+                    <span class="wl-label">Avg Win</span>
+                    <span class="wl-value positive">$${avgWin.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Avg Loss</span>
+                    <span class="wl-value negative">$${avgLoss.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Largest Win</span>
+                    <span class="wl-value positive">$${largestWin.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Largest Loss</span>
+                    <span class="wl-value negative">$${largestLoss.toFixed(2)}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Profit Factor</span>
+                    <span class="wl-value">${profitFactor}</span>
+                </div>
+                <div class="wl-item">
+                    <span class="wl-label">Expectancy</span>
+                    <span class="wl-value ${expectancy >= 0 ? 'positive' : 'negative'}">$${expectancy.toFixed(2)}</span>
+                </div>
+            `;
+        }
+    }
+
+    function updateMonthlyReturns() {
+        const trades = analyticsData.trades;
+        if (!trades.length) return;
+
+        // Group trades by month
+        const monthlyPnl = {};
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+        trades.forEach(t => {
+            const date = new Date(t.time);
+            const monthKey = months[date.getMonth()];
+            monthlyPnl[monthKey] = (monthlyPnl[monthKey] || 0) + (t.pnl || 0);
+        });
+
+        const container = document.querySelector('.monthly-returns');
+        if (container) {
+            // Show last 6 months
+            const currentMonth = new Date().getMonth();
+            const displayMonths = [];
+            for (let i = 5; i >= 0; i--) {
+                const monthIdx = (currentMonth - i + 12) % 12;
+                displayMonths.push(months[monthIdx]);
+            }
+
+            container.innerHTML = displayMonths.map(month => {
+                const pnl = monthlyPnl[month] || 0;
+                const pnlClass = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : 'neutral';
+                return `
+                    <div class="month-item">
+                        <span class="month-name">${month}</span>
+                        <span class="month-value ${pnlClass}">${pnl !== 0 ? (pnl > 0 ? '+' : '') + '$' + pnl.toFixed(0) : '-'}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+    }
+</script>
+{% endblock %}

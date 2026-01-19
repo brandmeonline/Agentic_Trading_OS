@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}Leaderboard - Agentic Trading OS{% endblock %}
+{% block page_title %}Trader Leaderboard{% endblock %}
+
+{% block content %}
+<div class="leaderboard-page">
+    <!-- Time Period Tabs -->
+    <div class="leaderboard-tabs">
+        <button class="tab-btn active" data-period="all" onclick="switchPeriod('all', this)">All Time</button>
+        <button class="tab-btn" data-period="monthly" onclick="switchPeriod('monthly', this)">This Month</button>
+        <button class="tab-btn" data-period="weekly" onclick="switchPeriod('weekly', this)">This Week</button>
+    </div>
+
+    <!-- Sort Options -->
+    <div class="leaderboard-controls">
+        <select id="sort-by" onchange="loadLeaderboard()">
+            <option value="return">Total Return</option>
+            <option value="monthly">Monthly Return</option>
+            <option value="win_rate">Win Rate</option>
+            <option value="sharpe">Sharpe Ratio</option>
+            <option value="followers">Followers</option>
+            <option value="copiers">Copiers</option>
+        </select>
+    </div>
+
+    <!-- Top 3 Podium -->
+    <div class="podium-section">
+        <div class="podium">
+            <div class="podium-place second" id="podium-2">
+                <div class="podium-avatar">2</div>
+                <div class="podium-name">-</div>
+                <div class="podium-return">-</div>
+                <div class="podium-bar"></div>
+            </div>
+            <div class="podium-place first" id="podium-1">
+                <div class="podium-crown">&#128081;</div>
+                <div class="podium-avatar">1</div>
+                <div class="podium-name">-</div>
+                <div class="podium-return">-</div>
+                <div class="podium-bar"></div>
+            </div>
+            <div class="podium-place third" id="podium-3">
+                <div class="podium-avatar">3</div>
+                <div class="podium-name">-</div>
+                <div class="podium-return">-</div>
+                <div class="podium-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full Leaderboard Table -->
+    <div class="card leaderboard-card">
+        <div class="card-header">
+            <h2>Rankings</h2>
+            <span class="trader-count" id="trader-count">0 traders</span>
+        </div>
+        <div class="card-body">
+            <table class="leaderboard-table">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Trader</th>
+                        <th>Return</th>
+                        <th>Win Rate</th>
+                        <th>Sharpe</th>
+                        <th>Trades</th>
+                        <th>Followers</th>
+                        <th>Copiers</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="leaderboard-body">
+                    <tr>
+                        <td colspan="9" class="loading-row">Loading leaderboard...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Your Stats Card -->
+    <div class="card your-stats-card">
+        <div class="card-header">
+            <h3>Your Ranking</h3>
+        </div>
+        <div class="card-body">
+            <div class="your-rank" id="your-rank">
+                <span class="rank-number">-</span>
+                <span class="rank-label">Not Ranked</span>
+            </div>
+            <div class="your-stats-grid">
+                <div class="stat-item">
+                    <span class="stat-value" id="your-return">0%</span>
+                    <span class="stat-label">Total Return</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="your-winrate">0%</span>
+                    <span class="stat-label">Win Rate</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="your-trades">0</span>
+                    <span class="stat-label">Trades</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="your-followers">0</span>
+                    <span class="stat-label">Followers</span>
+                </div>
+            </div>
+            <button class="btn btn-primary btn-block" onclick="enableCopyTrading()">Enable Copy Trading</button>
+        </div>
+    </div>
+</div>
+
+<!-- Copy Trading Modal -->
+<div class="modal" id="copy-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Copy Trader</h3>
+            <button class="modal-close" onclick="closeCopyModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="copy-trader-name">Copy trades from: <strong>-</strong></p>
+            <form id="copy-form" onsubmit="return setupCopyTrading(event)">
+                <input type="hidden" id="copy-leader-id">
+                <div class="form-group">
+                    <label>Allocation (%)</label>
+                    <input type="number" id="copy-allocation" value="10" min="1" max="100">
+                    <small>Percentage of portfolio to allocate</small>
+                </div>
+                <div class="form-group">
+                    <label>Max Position Size ($)</label>
+                    <input type="number" id="copy-max-position" value="5000" min="100">
+                </div>
+                <div class="form-group">
+                    <label>Copy Ratio</label>
+                    <input type="number" id="copy-ratio" value="1.0" min="0.1" max="10" step="0.1">
+                    <small>1.0 = same size as leader</small>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Start Copying</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentPeriod = 'all';
+
+    document.addEventListener('DOMContentLoaded', function() {
+        loadLeaderboard();
+    });
+
+    function switchPeriod(period, btn) {
+        currentPeriod = period;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        loadLeaderboard();
+    }
+
+    function loadLeaderboard() {
+        const sortBy = document.getElementById('sort-by').value;
+
+        fetch(`/api/leaderboard?sort=${sortBy}`)
+            .then(r => r.json())
+            .then(traders => {
+                document.getElementById('trader-count').textContent = `${traders.length} traders`;
+
+                // Update podium
+                updatePodium(traders.slice(0, 3));
+
+                // Update table
+                const tbody = document.getElementById('leaderboard-body');
+                if (traders.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="9" class="empty-row">
+                                No traders on the leaderboard yet. Start trading to get ranked!
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tbody.innerHTML = traders.map(t => `
+                    <tr class="${t.rank <= 3 ? 'top-rank' : ''}">
+                        <td class="rank-cell">
+                            <span class="rank-badge rank-${t.rank <= 3 ? t.rank : 'default'}">${t.rank}</span>
+                        </td>
+                        <td class="trader-cell">
+                            <div class="trader-info">
+                                <span class="trader-name">${t.display_name}</span>
+                                <span class="trader-username">@${t.username}</span>
+                            </div>
+                            <div class="badges">
+                                ${t.badges.map(b => `<span class="badge-icon" title="${b}">${getBadgeIcon(b)}</span>`).join('')}
+                            </div>
+                        </td>
+                        <td class="${t.total_return >= 0 ? 'positive' : 'negative'}">
+                            ${t.total_return >= 0 ? '+' : ''}${t.total_return.toFixed(2)}%
+                        </td>
+                        <td>${t.win_rate.toFixed(1)}%</td>
+                        <td>${t.sharpe_ratio.toFixed(2)}</td>
+                        <td>${t.total_trades}</td>
+                        <td>${t.followers}</td>
+                        <td>${t.copiers}</td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="showCopyModal('${t.id}', '${t.display_name}')">
+                                Copy
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            })
+            .catch(err => {
+                console.error('Failed to load leaderboard:', err);
+            });
+    }
+
+    function updatePodium(topThree) {
+        const positions = ['first', 'second', 'third'];
+
+        topThree.forEach((t, i) => {
+            const el = document.getElementById(`podium-${i + 1}`);
+            if (el && t) {
+                el.querySelector('.podium-name').textContent = t.display_name;
+                el.querySelector('.podium-return').textContent =
+                    (t.total_return >= 0 ? '+' : '') + t.total_return.toFixed(1) + '%';
+                el.querySelector('.podium-return').className =
+                    'podium-return ' + (t.total_return >= 0 ? 'positive' : 'negative');
+            }
+        });
+    }
+
+    function getBadgeIcon(badge) {
+        const icons = {
+            'top_trader': '&#127942;',
+            'consistent': '&#128200;',
+            'high_volume': '&#128176;',
+            'verified': '&#9989;',
+            'early_adopter': '&#127775;'
+        };
+        return icons[badge] || '&#127941;';
+    }
+
+    function showCopyModal(traderId, traderName) {
+        document.getElementById('copy-leader-id').value = traderId;
+        document.getElementById('copy-trader-name').innerHTML = `Copy trades from: <strong>${traderName}</strong>`;
+        document.getElementById('copy-modal').classList.add('show');
+    }
+
+    function closeCopyModal() {
+        document.getElementById('copy-modal').classList.remove('show');
+    }
+
+    function setupCopyTrading(e) {
+        e.preventDefault();
+
+        const data = {
+            leader_id: document.getElementById('copy-leader-id').value,
+            allocation_percent: parseFloat(document.getElementById('copy-allocation').value),
+            max_position_size: parseFloat(document.getElementById('copy-max-position').value),
+            copy_ratio: parseFloat(document.getElementById('copy-ratio').value)
+        };
+
+        fetch('/api/copy-trading/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(r => r.json())
+        .then(result => {
+            if (result.success) {
+                closeCopyModal();
+                alert('Copy trading enabled! You will now copy trades from this trader.');
+            } else {
+                alert('Error: ' + result.error);
+            }
+        });
+
+        return false;
+    }
+
+    function enableCopyTrading() {
+        alert('To enable copy trading on your account, go to Settings and turn on "Allow others to copy my trades".');
+    }
+
+    // Close modal on outside click
+    document.getElementById('copy-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeCopyModal();
+    });
+</script>
+{% endblock %}

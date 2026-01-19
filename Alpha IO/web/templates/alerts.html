@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+
+{% block title %}Alerts - Agentic Trading OS{% endblock %}
+{% block page_title %}Alerts & Notifications{% endblock %}
+
+{% block content %}
+<div class="alerts-page">
+    <!-- Notification Bell -->
+    <div class="notification-header">
+        <div class="notification-summary">
+            <span class="notification-count" id="unread-count">0</span>
+            <span>unread notifications</span>
+        </div>
+        <button class="btn btn-secondary" onclick="markAllRead()">Mark All Read</button>
+    </div>
+
+    <div class="alerts-grid">
+        <!-- Create Alert Card -->
+        <div class="card create-alert-card">
+            <div class="card-header">
+                <h2>Create New Alert</h2>
+            </div>
+            <div class="card-body">
+                <form id="create-alert-form" onsubmit="return createAlert(event)">
+                    <div class="form-group">
+                        <label for="alert-name">Alert Name</label>
+                        <input type="text" id="alert-name" name="name" placeholder="e.g., AAPL above $200" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="alert-symbol">Symbol</label>
+                            <select id="alert-symbol" name="symbol">
+                                <option value="AAPL">AAPL</option>
+                                <option value="SPY">SPY</option>
+                                <option value="TSLA">TSLA</option>
+                                <option value="MSFT">MSFT</option>
+                                <option value="GOOGL">GOOGL</option>
+                                <option value="BTC/USD">BTC/USD</option>
+                                <option value="ETH/USD">ETH/USD</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="alert-type">Condition</label>
+                            <select id="alert-type" name="type">
+                                <option value="price_above">Price Above</option>
+                                <option value="price_below">Price Below</option>
+                                <option value="price_cross">Price Crosses</option>
+                                <option value="percent_change">% Change</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="alert-value">Target Value</label>
+                        <input type="number" id="alert-value" name="value" step="0.01" placeholder="e.g., 200.00" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Notification Channels</label>
+                        <div class="channel-checkboxes">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="channel_in_app" checked> In-App
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="channel_webhook"> Webhook
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="channel_discord"> Discord
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="channel_email"> Email
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group webhook-url-group" style="display: none;">
+                        <label for="webhook-url">Webhook URL</label>
+                        <input type="url" id="webhook-url" name="webhook_url" placeholder="https://discord.com/api/webhooks/...">
+                    </div>
+
+                    <div class="form-group email-group" style="display: none;">
+                        <label for="alert-email">Email Address</label>
+                        <input type="email" id="alert-email" name="email" placeholder="your@email.com">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="alert-message">Custom Message (optional)</label>
+                        <input type="text" id="alert-message" name="message" placeholder="Use {symbol}, {value}, {target}">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="max-triggers">Max Triggers (0 = unlimited)</label>
+                            <input type="number" id="max-triggers" name="max_triggers" value="1" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="cooldown">Cooldown (seconds)</label>
+                            <input type="number" id="cooldown" name="cooldown" value="60" min="0">
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-block">Create Alert</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Active Alerts -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Active Alerts</h2>
+                <span class="badge" id="active-count">0</span>
+            </div>
+            <div class="card-body">
+                <div class="alerts-list" id="alerts-list">
+                    <div class="empty-state">
+                        <p>No active alerts</p>
+                        <small>Create an alert to get started</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Notifications -->
+        <div class="card notifications-card">
+            <div class="card-header">
+                <h2>Recent Notifications</h2>
+                <button class="btn btn-sm btn-secondary" onclick="loadNotifications()">Refresh</button>
+            </div>
+            <div class="card-body">
+                <div class="notifications-list" id="notifications-list">
+                    <div class="empty-state">
+                        <p>No notifications</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Webhook Presets -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Webhook Presets</h2>
+            </div>
+            <div class="card-body">
+                <div class="webhook-presets">
+                    <div class="preset-item">
+                        <div class="preset-icon discord">D</div>
+                        <div class="preset-info">
+                            <span class="preset-name">Discord</span>
+                            <span class="preset-url" id="discord-preset">Not configured</span>
+                        </div>
+                        <button class="btn btn-sm btn-secondary" onclick="configureWebhook('discord')">Configure</button>
+                    </div>
+                    <div class="preset-item">
+                        <div class="preset-icon slack">S</div>
+                        <div class="preset-info">
+                            <span class="preset-name">Slack</span>
+                            <span class="preset-url" id="slack-preset">Not configured</span>
+                        </div>
+                        <button class="btn btn-sm btn-secondary" onclick="configureWebhook('slack')">Configure</button>
+                    </div>
+                    <div class="preset-item">
+                        <div class="preset-icon telegram">T</div>
+                        <div class="preset-info">
+                            <span class="preset-name">Telegram</span>
+                            <span class="preset-url" id="telegram-preset">Not configured</span>
+                        </div>
+                        <button class="btn btn-sm btn-secondary" onclick="configureWebhook('telegram')">Configure</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Webhook Configuration Modal -->
+<div id="webhook-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Configure Webhook</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="webhook-config-form">
+                <input type="hidden" id="webhook-type" name="type">
+                <div class="form-group">
+                    <label for="webhook-config-url">Webhook URL</label>
+                    <input type="url" id="webhook-config-url" name="url" required>
+                </div>
+                <div class="form-group telegram-fields" style="display: none;">
+                    <label for="telegram-chat-id">Chat ID</label>
+                    <input type="text" id="telegram-chat-id" name="chat_id">
+                </div>
+                <button type="submit" class="btn btn-primary">Save Webhook</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Toggle webhook/email fields
+    document.querySelectorAll('input[name^="channel_"]').forEach(cb => {
+        cb.addEventListener('change', function() {
+            const webhookGroup = document.querySelector('.webhook-url-group');
+            const emailGroup = document.querySelector('.email-group');
+
+            const webhookChecked = document.querySelector('input[name="channel_webhook"]').checked ||
+                                   document.querySelector('input[name="channel_discord"]').checked;
+            const emailChecked = document.querySelector('input[name="channel_email"]').checked;
+
+            webhookGroup.style.display = webhookChecked ? 'block' : 'none';
+            emailGroup.style.display = emailChecked ? 'block' : 'none';
+        });
+    });
+
+    function createAlert(event) {
+        event.preventDefault();
+
+        const form = document.getElementById('create-alert-form');
+        const formData = new FormData(form);
+
+        const channels = [];
+        if (formData.get('channel_in_app')) channels.push('in_app');
+        if (formData.get('channel_webhook')) channels.push('webhook');
+        if (formData.get('channel_discord')) channels.push('discord');
+        if (formData.get('channel_email')) channels.push('email');
+
+        const data = {
+            name: formData.get('name'),
+            symbol: formData.get('symbol'),
+            alert_type: formData.get('type'),
+            value: parseFloat(formData.get('value')),
+            channels: channels,
+            webhook_url: formData.get('webhook_url') || '',
+            email_to: formData.get('email') || '',
+            message: formData.get('message') || '',
+            max_triggers: parseInt(formData.get('max_triggers')) || 0,
+            cooldown: parseInt(formData.get('cooldown')) || 60
+        };
+
+        fetch('/api/alerts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(r => r.json())
+        .then(result => {
+            if (result.success) {
+                showAlert('success', 'Alert created successfully');
+                form.reset();
+                loadAlerts();
+            } else {
+                showAlert('error', result.error || 'Failed to create alert');
+            }
+        })
+        .catch(err => showAlert('error', 'Request failed'));
+
+        return false;
+    }
+
+    function loadAlerts() {
+        fetch('/api/alerts')
+            .then(r => r.json())
+            .then(alerts => {
+                const list = document.getElementById('alerts-list');
+                const count = document.getElementById('active-count');
+
+                const activeAlerts = alerts.filter(a => a.status === 'active');
+                count.textContent = activeAlerts.length;
+
+                if (alerts.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>No active alerts</p></div>';
+                    return;
+                }
+
+                list.innerHTML = alerts.map(a => `
+                    <div class="alert-item ${a.status}">
+                        <div class="alert-info">
+                            <span class="alert-name">${a.name}</span>
+                            <span class="alert-condition">${a.condition.symbol} ${a.condition.alert_type} ${a.condition.value}</span>
+                        </div>
+                        <div class="alert-meta">
+                            <span class="alert-triggers">${a.trigger_count} triggers</span>
+                            <span class="alert-status ${a.status}">${a.status}</span>
+                        </div>
+                        <div class="alert-actions">
+                            ${a.status === 'active' ?
+                                `<button class="btn btn-sm btn-warning" onclick="toggleAlert('${a.id}', false)">Disable</button>` :
+                                `<button class="btn btn-sm btn-success" onclick="toggleAlert('${a.id}', true)">Enable</button>`
+                            }
+                            <button class="btn btn-sm btn-danger" onclick="deleteAlert('${a.id}')">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            });
+    }
+
+    function loadNotifications() {
+        fetch('/api/notifications')
+            .then(r => r.json())
+            .then(notifications => {
+                const list = document.getElementById('notifications-list');
+                const unreadCount = document.getElementById('unread-count');
+
+                const unread = notifications.filter(n => !n.read).length;
+                unreadCount.textContent = unread;
+
+                if (notifications.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>No notifications</p></div>';
+                    return;
+                }
+
+                list.innerHTML = notifications.reverse().map(n => `
+                    <div class="notification-item ${n.read ? 'read' : 'unread'} ${n.type}" onclick="markRead('${n.id}')">
+                        <div class="notification-icon">${getNotificationIcon(n.type)}</div>
+                        <div class="notification-content">
+                            <span class="notification-title">${n.title}</span>
+                            <span class="notification-message">${n.message}</span>
+                            <span class="notification-time">${formatTime(n.timestamp)}</span>
+                        </div>
+                    </div>
+                `).join('');
+            });
+    }
+
+    function getNotificationIcon(type) {
+        const icons = {
+            'info': 'ℹ️',
+            'success': '✅',
+            'warning': '⚠️',
+            'error': '❌'
+        };
+        return icons[type] || '🔔';
+    }
+
+    function formatTime(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+    }
+
+    function toggleAlert(alertId, enable) {
+        fetch(`/api/alerts/${alertId}/${enable ? 'enable' : 'disable'}`, { method: 'POST' })
+            .then(r => r.json())
+            .then(result => {
+                if (result.success) {
+                    loadAlerts();
+                }
+            });
+    }
+
+    function deleteAlert(alertId) {
+        if (!confirm('Delete this alert?')) return;
+
+        fetch(`/api/alerts/${alertId}`, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(result => {
+                if (result.success) {
+                    loadAlerts();
+                    showAlert('success', 'Alert deleted');
+                }
+            });
+    }
+
+    function markRead(notificationId) {
+        fetch(`/api/notifications/${notificationId}/read`, { method: 'POST' })
+            .then(() => loadNotifications());
+    }
+
+    function markAllRead() {
+        fetch('/api/notifications/read-all', { method: 'POST' })
+            .then(() => loadNotifications());
+    }
+
+    function configureWebhook(type) {
+        document.getElementById('webhook-type').value = type;
+        document.getElementById('webhook-modal').style.display = 'flex';
+
+        const telegramFields = document.querySelector('.telegram-fields');
+        telegramFields.style.display = type === 'telegram' ? 'block' : 'none';
+    }
+
+    function closeModal() {
+        document.getElementById('webhook-modal').style.display = 'none';
+    }
+
+    function showAlert(type, message) {
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        alert.textContent = message;
+        document.querySelector('.content-wrapper').insertBefore(alert, document.querySelector('.content-wrapper').firstChild);
+        setTimeout(() => alert.remove(), 5000);
+    }
+
+    // Load on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        loadAlerts();
+        loadNotifications();
+
+        // Refresh every 10 seconds
+        setInterval(loadNotifications, 10000);
+    });
+</script>
+{% endblock %}

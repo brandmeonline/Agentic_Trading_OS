@@ -1,0 +1,38 @@
+# Agentic Trading OS - Prometheus Configuration
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'agentic-trading'
+
+# Alerting rules (optional)
+# rule_files:
+#   - "alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Trading System Metrics
+  - job_name: 'trading-system'
+    static_configs:
+      - targets: ['trading:8080']
+    metrics_path: '/api/v1/system/metrics'
+    scrape_interval: 10s
+
+  # PostgreSQL Exporter (optional)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    scrape_interval: 30s
+
+  # Redis Exporter (optional)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+
+  # Node Exporter (optional - for host metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+    scrape_interval: 15s
