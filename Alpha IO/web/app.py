@@ -539,6 +539,16 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # ==========================================================================
     # Routes - API
     # ==========================================================================
+    @app.route("/api/health")
+    def api_health():
+        """Public health endpoint for uptime checks."""
+        return jsonify({
+            "status": "ok",
+            "service": "agentic-trading-web",
+            "version": "1.0.0",
+            "timestamp": datetime.now().isoformat()
+        })
+
 
     @app.route("/api/stats")
     @login_required
