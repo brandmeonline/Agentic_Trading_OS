@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodexReview>
+    <!-- ========================================== -->
+    <!-- METADATA                                   -->
+    <!-- ========================================== -->
+    <Metadata>
+        <ProjectName>NextGen Trading Platform</ProjectName>
+        <ReviewDate>2026-05-10</ReviewDate>
+        <LeadReviewer>Principal Trading Systems Architect</LeadReviewer>
+        <ReviewStatus>Completed</ReviewStatus>
+        <TargetActivationVersion>v2.0.0-rc1</TargetActivationVersion>
+    </Metadata>
+
+    <!-- ========================================== -->
+    <!-- REPOSITORY CODE REVIEW                     -->
+    <!-- ========================================== -->
+    <CodeReview>
+        <Repository name="core-trading-engine" branch="main">
+            <Component name="OrderMatchingEngine">
+                <Status>Needs Optimization</Status>
+                <Findings>
+                    <Issue id="C-001" severity="Critical">Concurrency bottlenecks detected in the order queue mutex locks during high-throughput stress tests.</Issue>
+                    <Issue id="C-002" severity="Medium">Memory fragmentation observed in the order book snapshot garbage collection cycle.</Issue>
+                </Findings>
+                <Recommendations>
+                    <Action>Implement lock-free data structures (e.g., disruptor pattern) for the core matching queue.</Action>
+                    <Action>Pre-allocate memory pools for order objects to minimize GC pauses.</Action>
+                </Recommendations>
+            </Component>
+            
+            <Component name="FIX_ExecutionGateway">
+                <Status>Approved with Conditions</Status>
+                <Findings>
+                    <Issue id="C-003" severity="High">Outdated cryptographic ciphers used in FIX session TLS handshake.</Issue>
+                </Findings>
+                <Recommendations>
+                    <Action>Force TLS 1.3 across all client and exchange-facing execution nodes.</Action>
+                </Recommendations>
+            </Component>
+
+            <Component name="PreTradeRiskControl">
+                <Status>Approved</Status>
+                <Findings>
+                    <Issue id="C-004" severity="Low">Hardcoded fat-finger limits for OTC instruments.</Issue>
+                </Findings>
+                <Recommendations>
+                    <Action>Migrate risk thresholds to a dynamic configuration database.</Action>
+                </Recommendations>
+            </Component>
+        </Repository>
+    </CodeReview>
+
+    <!-- ========================================== -->
+    <!-- DOCUMENTATION REVIEW                       -->
+    <!-- ========================================== -->
+    <DocumentReview>
+        <Document type="ArchitectureSpecification">
+            <Title>System Architecture Design v1.4</Title>
+            <Status>Outdated</Status>
+            <Gaps>
+                <Gap>Does not reflect the recent migration from Redis to Aerospike for the market data caching layer.</Gap>
+                <Gap>Missing network topology diagrams for the cross-connects in the new colocation facility.</Gap>
+            </Gaps>
+            <UpdatesRequired>
+                <Task>Revise data flow diagrams to include Aerospike clusters.</Task>
+                <Task>Append BGP routing schemas for colocation centers.</Task>
+            </UpdatesRequired>
+        </Document>
+
+        <Document type="ComplianceAndRisk">
+            <Title>Regulatory Compliance Handbook</Title>
+            <Status>Pending Review</Status>
+            <Gaps>
+                <Gap>Missing updated audit logging procedures required for SEC Rule 613 (Consolidated Audit Trail).</Gap>
+            </Gaps>
+            <UpdatesRequired>
+                <Task>Draft and append CAT reporting technical specifications.</Task>
+            </UpdatesRequired>
+        </Document>
+    </DocumentReview>
+
+    <!-- ========================================== -->
+    <!-- NEXT GENERATION ACTIVATION PLAN            -->
+    <!-- ========================================== -->
+    <NextGenerationPlan>
+        <Phase id="1" name="Remediation and Integration">
+            <Objective>Address all critical code findings and finalize documentation.</Objective>
+            <Tasks>
+                <Task owner="Core Engineering Team" deadline="2026-05-20">Implement lock-free queues in OrderMatchingEngine.</Task>
+                <Task owner="Security Team" deadline="2026-05-22">Deploy TLS 1.3 patch to FIX_ExecutionGateway.</Task>
+                <Task owner="Architecture Team" deadline="2026-05-25">Publish updated System Architecture Design v2.0.</Task>
+            </Tasks>
+        </Phase>
+
+        <Phase id="2" name="Staging and UAT (User Acceptance Testing)">
+            <Objective>Validate the remediated system under simulated market conditions.</Objective>
+            <Tasks>
+                <Task owner="QA Team" deadline="2026-06-05">Execute high-frequency trading (HFT) latency stress tests.</Task>
+                <Task owner="Risk Operations" deadline="2026-06-10">Validate dynamic pre-trade risk controls and circuit breakers.</Task>
+                <Task owner="External Partners" deadline="2026-06-15">Conduct mock trading sessions with beta clients.</Task>
+            </Tasks>
+        </Phase>
+
+        <Phase id="3" name="Production Activation">
+            <Objective>Live deployment and activation of the trading application.</Objective>
+            <Tasks>
+                <Task owner="DevOps" deadline="2026-06-20">Deploy NextGen binaries to colocation servers (Dark Launch).</Task>
+                <Task owner="Network Engineering" deadline="2026-06-21">Cutover market data feeds to new processing pipeline.</Task>
+                <Task owner="Executive Committee" deadline="2026-06-22">Final Go/No-Go activation decision.</Task>
+            </Tasks>
+            <ActivationMilestone>
+                <Event>System Live - Market Open</Event>
+                <TargetDate>2026-06-23T09:30:00Z</TargetDate>
+                <RollbackPlan>Keep legacy system in read-only standby mode for 72 hours post-activation.</RollbackPlan>
+            </ActivationMilestone>
+        </Phase>
+    </NextGenerationPlan>
+</CodexReview>
