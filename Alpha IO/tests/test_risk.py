@@ -89,6 +89,15 @@ class TestRiskManager(unittest.TestCase):
         size = self.risk.get_position_size("BTC", 0.8)
         self.assertGreater(size, 0)
         self.assertLess(size, self.risk.capital)
+        self.assertEqual(self.risk.asset_exposure, {})
+
+    def test_position_size_is_pure(self):
+        """Test that position sizing does not reserve or mutate exposure."""
+        size_1 = self.risk.get_position_size("BTC", 0.8)
+        size_2 = self.risk.get_position_size("BTC", 0.8)
+
+        self.assertEqual(size_1, size_2)
+        self.assertEqual(self.risk.asset_exposure, {})
 
     def test_position_size_confidence_scaling(self):
         """Test that higher confidence leads to larger positions."""
@@ -105,11 +114,31 @@ class TestRiskManager(unittest.TestCase):
         total_size = 0
         for _ in range(20):
             size = self.risk.get_position_size("BTC", 0.95)
-            total_size += size
+            if self.risk.reserve_exposure("BTC", size):
+                total_size += size
 
         # Should be capped at concentration limit
         max_exposure = self.risk.capital * self.risk.config.max_position_concentration
         self.assertLessEqual(self.risk.asset_exposure.get("BTC", 0), max_exposure)
+        self.assertLessEqual(total_size, max_exposure)
+
+    def test_apply_and_release_fill_updates_exposure_once(self):
+        """Test explicit fill lifecycle controls exposure."""
+        self.risk.apply_fill("BTC", 500)
+        self.risk.apply_fill("BTC", 250)
+        self.assertEqual(self.risk.asset_exposure["BTC"], 750)
+
+        self.risk.apply_fill("BTC", -300)
+        self.assertEqual(self.risk.asset_exposure["BTC"], 450)
+
+        self.risk.release_exposure("BTC", 450)
+        self.assertNotIn("BTC", self.risk.asset_exposure)
+
+    def test_failed_reservation_does_not_mutate_exposure(self):
+        """Test rejected exposure reservations leave risk state unchanged."""
+        max_exposure = self.risk.capital * self.risk.config.max_position_concentration
+        self.assertFalse(self.risk.reserve_exposure("BTC", max_exposure + 1))
+        self.assertEqual(self.risk.asset_exposure, {})
 
     def test_update_after_trade_win(self):
         """Test update after winning trade."""
@@ -236,10 +265,12 @@ class TestRiskManager(unittest.TestCase):
 
         self.risk.set_position("ETH", pos)
         self.assertIn("ETH", self.risk.positions)
+        self.assertEqual(self.risk.asset_exposure["ETH"], pos.market_value)
 
         closed = self.risk.close_position("ETH")
         self.assertEqual(closed, pos)
         self.assertNotIn("ETH", self.risk.positions)
+        self.assertNotIn("ETH", self.risk.asset_exposure)
 
 
 class TestBackwardCompatibility(unittest.TestCase):

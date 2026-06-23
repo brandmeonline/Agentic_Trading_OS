@@ -15,11 +15,19 @@ import numpy as np
 import threading
 import queue
 import time
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
 from datetime import datetime
 import json
+
+from core.execution import ExecutionConfig, ExecutionEngine, OrderSide, OrderType
+from core.ledger import TradingLedger
+
+
+logger = logging.getLogger(__name__)
+_STOP_SIGNAL = object()
 
 
 # =============================================================================
@@ -61,6 +69,10 @@ class SystemConfig:
     signal_threshold: float = 0.6  # Minimum confidence for signals
     stop_loss_pct: float = 0.05  # 5% stop loss
     take_profit_pct: float = 0.15  # 15% take profit
+    max_signal_queue_size: int = 1000
+    signal_batch_size: int = 3
+    signal_flush_interval_seconds: float = 5.0
+    max_loop_errors: int = 3
 
 
 @dataclass
@@ -248,8 +260,13 @@ class TradeExecutor:
     - Execution routing
     """
 
-    def __init__(self, config: SystemConfig):
+    def __init__(
+        self,
+        config: SystemConfig,
+        execution_engine: Optional[ExecutionEngine] = None,
+    ):
         self.config = config
+        self.execution_engine = execution_engine or ExecutionEngine(ExecutionConfig(simulation_mode=True))
         self.pending_orders: List[Dict] = []
 
     def create_order(
@@ -353,12 +370,26 @@ class TradeExecutor:
         Returns:
             Tuple of (success, new_position, trade_record)
         """
-        # Simulate execution with slippage
-        slippage = np.random.uniform(0.0001, 0.001)  # 0.01% to 0.1%
-        if "long" in order["order_type"]:
-            executed_price = order["price"] * (1 + slippage)
-        else:
-            executed_price = order["price"] * (1 - slippage)
+        side = OrderSide.BUY if order["order_type"] in {"open_long", "close_short"} else OrderSide.SELL
+        self.execution_engine.set_price(order["symbol"], order["price"])
+        execution_order = self.execution_engine.create_order(
+            asset=order["symbol"],
+            side=side,
+            quantity=order["quantity"],
+            order_type=OrderType.MARKET,
+            price=order["price"],
+            strategy="unified_trading_engine",
+        )
+        result = self.execution_engine.submit_order(execution_order)
+        if not result.success:
+            return False, None, {
+                "type": "rejected",
+                "symbol": order["symbol"],
+                "reason": result.message,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        executed_price = result.order.avg_fill_price or result.order.filled_price or order["price"]
 
         # Create position
         if "open" in order["order_type"]:
@@ -446,7 +477,7 @@ class RiskController:
         total_exposure = sum(
             pos.quantity * pos.entry_price
             for pos in state.positions.values()
-        ) / state.capital
+        ) / state.capital if state.capital > 0 else 0.0
 
         if total_exposure > self.config.max_total_exposure:
             breaches.append({
@@ -466,8 +497,18 @@ class RiskController:
             self.circuit_breaker_triggered = True
 
         # Check daily loss
-        if len(state.pnl_history) > 0:
-            daily_pnl = sum(state.pnl_history[-252:]) / state.capital if len(state.pnl_history) >= 1 else 0
+        if state.recent_trades:
+            today = datetime.now().date()
+            daily_pnl_amount = 0.0
+            for trade in state.recent_trades:
+                try:
+                    timestamp = datetime.fromisoformat(trade.get("timestamp", ""))
+                except ValueError:
+                    continue
+                if timestamp.date() == today:
+                    daily_pnl_amount += float(trade.get("pnl", 0.0))
+
+            daily_pnl = daily_pnl_amount / state.capital if state.capital > 0 else 0.0
             if daily_pnl < -self.max_daily_loss:
                 breaches.append({
                     "type": "daily_loss",
@@ -535,7 +576,12 @@ class UnifiedTradingEngine:
 
         # Initialize components
         self.signal_aggregator = SignalAggregator(self.config)
-        self.executor = TradeExecutor(self.config)
+        self.ledger = TradingLedger(initial_cash=self.config.initial_capital)
+        self.execution_engine = ExecutionEngine(
+            ExecutionConfig(simulation_mode=self.config.mode != SystemMode.LIVE),
+            ledger=self.ledger,
+        )
+        self.executor = TradeExecutor(self.config, execution_engine=self.execution_engine)
         self.risk_controller = RiskController(self.config)
 
         # System state
@@ -550,9 +596,12 @@ class UnifiedTradingEngine:
         )
 
         # Signal queues
-        self._signal_queue: queue.Queue = queue.Queue()
+        self._signal_queue: queue.Queue = queue.Queue(maxsize=self.config.max_signal_queue_size)
         self._running = False
         self._lock = threading.Lock()
+        self._signal_thread: Optional[threading.Thread] = None
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._loop_errors: Dict[str, int] = {}
 
         # Performance tracking
         self.metrics = {
@@ -565,23 +614,39 @@ class UnifiedTradingEngine:
 
     def start(self):
         """Start the trading engine."""
+        if self._running:
+            return
+
         self._running = True
 
         # Start signal processing thread
-        self._signal_thread = threading.Thread(target=self._process_signals, daemon=True)
+        self._signal_thread = threading.Thread(target=self._process_signals, name="signal-processor", daemon=True)
         self._signal_thread.start()
 
         # Start position monitoring thread
-        self._monitor_thread = threading.Thread(target=self._monitor_positions, daemon=True)
+        self._monitor_thread = threading.Thread(target=self._monitor_positions, name="position-monitor", daemon=True)
         self._monitor_thread.start()
 
     def stop(self):
         """Stop the trading engine."""
         self._running = False
+        try:
+            self._signal_queue.put_nowait(_STOP_SIGNAL)
+        except queue.Full:
+            logger.warning("Signal queue full while stopping; waiting for worker timeout")
 
-    def add_signal(self, signal: TradeSignal):
+        for worker in (self._signal_thread, self._monitor_thread):
+            if worker and worker.is_alive():
+                worker.join(timeout=max(1.0, self.config.signal_flush_interval_seconds + 1.0))
+
+    def add_signal(self, signal: TradeSignal) -> bool:
         """Add a trading signal to the queue."""
-        self._signal_queue.put(signal)
+        try:
+            self._signal_queue.put_nowait(signal)
+            return True
+        except queue.Full:
+            self._record_loop_error("signal_queue", RuntimeError("Signal queue is full"))
+            return False
 
     def update_market_data(
         self,
@@ -612,40 +677,78 @@ class UnifiedTradingEngine:
     def _process_signals(self):
         """Background thread for processing signals."""
         signal_batch: List[TradeSignal] = []
+        last_flush = time.monotonic()
 
         while self._running:
             try:
-                # Collect signals with timeout
+                elapsed = time.monotonic() - last_flush
+                timeout = max(0.1, self.config.signal_flush_interval_seconds - elapsed)
+
                 try:
-                    signal = self._signal_queue.get(timeout=0.1)
+                    signal = self._signal_queue.get(timeout=timeout)
+                    if signal is _STOP_SIGNAL:
+                        break
                     signal_batch.append(signal)
+                    self._signal_queue.task_done()
                 except queue.Empty:
                     pass
 
-                # Process batch when we have signals or periodically
-                if signal_batch and (len(signal_batch) >= 3 or time.time() % 5 < 0.1):
-                    # Aggregate signals
-                    aggregated = self.signal_aggregator.aggregate_signals(signal_batch)
-
-                    if aggregated and aggregated.action != "hold":
-                        self._execute_signal(aggregated)
-
+                flush_due = time.monotonic() - last_flush >= self.config.signal_flush_interval_seconds
+                batch_full = len(signal_batch) >= self.config.signal_batch_size
+                if signal_batch and (batch_full or flush_due):
+                    self._handle_signal_batch(signal_batch)
                     signal_batch = []
+                    last_flush = time.monotonic()
+                    self._reset_loop_error("signal_processor")
 
-            except Exception:
-                time.sleep(1)
+            except Exception as exc:
+                self._record_loop_error("signal_processor", exc)
+                time.sleep(min(1.0, self.config.signal_flush_interval_seconds))
+
+        if signal_batch:
+            try:
+                self._handle_signal_batch(signal_batch)
+            except Exception as exc:
+                self._record_loop_error("signal_processor", exc)
+
+    def _handle_signal_batch(self, signal_batch: List[TradeSignal]) -> None:
+        """Aggregate and execute a batch of queued signals."""
+        aggregated = self.signal_aggregator.aggregate_signals(signal_batch)
+
+        if aggregated and aggregated.action != "hold":
+            self._execute_signal(aggregated)
+
+    def _record_loop_error(self, source: str, error: Exception) -> None:
+        """Record loop errors, log context, and trip the circuit breaker if repeated."""
+        exc_info = (type(error), error, error.__traceback__) if error.__traceback__ else None
+        logger.error("%s failure in unified trading engine: %s", source, error, exc_info=exc_info)
+        with self._lock:
+            self.state.error_count += 1
+            self._loop_errors[source] = self._loop_errors.get(source, 0) + 1
+            if self._loop_errors[source] >= self.config.max_loop_errors:
+                self.state.circuit_breaker_active = True
+                self.state.is_trading_enabled = False
+
+    def _reset_loop_error(self, source: str) -> None:
+        """Reset loop error counter after a successful cycle."""
+        self._loop_errors[source] = 0
 
     def _execute_signal(self, signal: TradeSignal):
         """Execute a trading signal."""
         with self._lock:
+            if not self.state.is_trading_enabled:
+                logger.warning("Trading disabled; signal ignored for %s", signal.symbol)
+                return
+
             # Check risk limits
             risk_status = self.risk_controller.check_risk_limits(self.state)
 
             if not risk_status["is_safe"]:
-                # Log risk breach
+                logger.warning("Risk limits blocked signal for %s: %s", signal.symbol, risk_status["breaches"])
                 return
 
             if self.state.circuit_breaker_active:
+                logger.warning("Circuit breaker active; signal ignored for %s", signal.symbol)
                 return
 
             # Get current price (would come from market data in production)
@@ -671,7 +774,12 @@ class UnifiedTradingEngine:
 
                     if trade_record:
                         self.state.recent_trades.append(trade_record)
-                        self._update_metrics(trade_record)
+                        if trade_record.get("type") == "close":
+                            pnl = float(trade_record.get("pnl", 0.0))
+                            self.state.capital += pnl
+                            self.state.pnl_history.append(pnl)
+                        if trade_record.get("type") in {"open", "close"}:
+                            self._update_metrics(trade_record)
 
     def _close_position(self, symbol: str, price: float, reason: str):
         """Close a position."""
@@ -679,12 +787,28 @@ class UnifiedTradingEngine:
             return
 
         pos = self.state.positions[symbol]
+        side = OrderSide.SELL if pos.side == "long" else OrderSide.BUY
+        self.execution_engine.set_price(symbol, price)
+        execution_order = self.execution_engine.create_order(
+            asset=symbol,
+            side=side,
+            quantity=pos.quantity,
+            order_type=OrderType.MARKET,
+            price=price,
+            strategy=f"close_{reason}",
+        )
+        result = self.execution_engine.submit_order(execution_order)
+        if not result.success:
+            logger.warning("Failed to close %s via execution engine: %s", symbol, result.message)
+            return
+
+        executed_price = result.order.avg_fill_price or result.order.filled_price or price
 
         # Calculate PnL
         if pos.side == "long":
-            pnl = (price - pos.entry_price) * pos.quantity
+            pnl = (executed_price - pos.entry_price) * pos.quantity
         else:
-            pnl = (pos.entry_price - price) * pos.quantity
+            pnl = (pos.entry_price - executed_price) * pos.quantity
 
         # Update capital
         self.state.capital += pnl
@@ -696,7 +820,7 @@ class UnifiedTradingEngine:
             "symbol": symbol,
             "side": pos.side,
             "entry_price": pos.entry_price,
-            "exit_price": price,
+            "exit_price": executed_price,
             "quantity": pos.quantity,
             "pnl": pnl,
             "reason": reason,
@@ -721,8 +845,10 @@ class UnifiedTradingEngine:
                         self.state.circuit_breaker_active = True
 
                 time.sleep(1)
+                self._reset_loop_error("position_monitor")
 
-            except Exception:
+            except Exception as exc:
+                self._record_loop_error("position_monitor", exc)
                 time.sleep(5)
 
     def _update_metrics(self, trade_record: Dict):
@@ -772,6 +898,7 @@ class UnifiedTradingEngine:
                 "is_trading": self.state.is_trading_enabled,
                 "circuit_breaker": self.state.circuit_breaker_active,
                 "metrics": self.metrics,
+                "ledger": self.ledger.snapshot().to_dict(),
                 "last_update": self.state.last_update.isoformat()
             }
 

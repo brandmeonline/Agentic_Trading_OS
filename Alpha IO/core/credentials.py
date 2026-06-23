@@ -95,6 +95,10 @@ class Credential:
 # Encryption Helper
 # =============================================================================
 
+class CredentialEncryptionError(RuntimeError):
+    """Raised when credential encryption cannot be performed safely."""
+
+
 class EncryptionHelper:
     """Handles encryption/decryption of credentials."""
 
@@ -104,6 +108,14 @@ class EncryptionHelper:
         self._salt: Optional[bytes] = None
         # Try to import cryptography on first use
         self._use_crypto = _try_import_cryptography()
+
+    def _require_crypto(self) -> None:
+        """Ensure real authenticated encryption is available."""
+        if not self._use_crypto or Fernet is None:
+            raise CredentialEncryptionError(
+                "Encrypted credential storage requires the 'cryptography' package. "
+                "Install it or explicitly disable encryption for local-only development."
+            )
 
     def initialize(self, salt: Optional[bytes] = None):
         """Initialize encryption with password."""
@@ -116,16 +128,14 @@ class EncryptionHelper:
 
         self._salt = salt or secrets.token_bytes(16)
 
-        if self._use_crypto and Fernet is not None:
-            key = self._derive_key(self._password, self._salt)
-            self._fernet = Fernet(key)
+        self._require_crypto()
+        key = self._derive_key(self._password, self._salt)
+        self._fernet = Fernet(key)
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         """Derive encryption key from password."""
         if not HAS_CRYPTOGRAPHY:
-            # Fallback: simple key derivation
-            combined = password.encode() + salt
-            return base64.urlsafe_b64encode(hashlib.sha256(combined).digest())
+            raise CredentialEncryptionError("Cannot derive credential encryption key without cryptography")
 
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -147,24 +157,14 @@ class EncryptionHelper:
 
     def encrypt(self, data: str) -> bytes:
         """Encrypt string data."""
-        if not self._use_crypto or self._fernet is None:
-            if self._salt is None:
-                self.initialize()
-            # Fallback: base64 encoding with obfuscation (not secure, but functional)
-            key = self._derive_key(self._password or "", self._salt)
-            obfuscated = base64.b64encode(data.encode())
-            return b"FALLBACK:" + obfuscated
-
         if self._fernet is None:
             self.initialize()
         return self._fernet.encrypt(data.encode())
 
     def decrypt(self, data: bytes) -> str:
         """Decrypt bytes to string."""
-        # Handle fallback format
         if data.startswith(b"FALLBACK:"):
-            obfuscated = data[9:]
-            return base64.b64decode(obfuscated).decode()
+            raise CredentialEncryptionError("Refusing to decrypt legacy FALLBACK credential data")
 
         if self._fernet is None:
             raise RuntimeError("Encryption not initialized")
@@ -349,6 +349,8 @@ class CredentialsManager:
                     expires_at=datetime.fromisoformat(cred_data["expires_at"]) if cred_data.get("expires_at") else None,
                     metadata=cred_data.get("metadata", {}),
                 )
+        except CredentialEncryptionError:
+            raise
         except Exception as e:
             print(f"Failed to load encrypted credentials: {e}")
 

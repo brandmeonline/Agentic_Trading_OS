@@ -176,7 +176,7 @@ class CircuitBreaker:
         self.failure_count = 0
         self.success_count = 0
         self.last_failure_time = 0.0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def can_execute(self) -> bool:
         """Check if operation can proceed."""
@@ -387,7 +387,7 @@ class WebSocketFeed:
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def connect(self):
         """Start the feed connection."""
@@ -480,7 +480,7 @@ class StreamProcessor:
         self._buffers: Dict[str, deque] = {}
         self._aggregators: Dict[str, Dict] = {}
         self._callbacks: List[Callable[[str, Any], None]] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def process_tick(self, tick: MarketTick):
         """Process incoming tick."""
@@ -628,7 +628,7 @@ class FeatureStore:
         self._features: Dict[str, Dict[str, Any]] = {}  # symbol -> feature_name -> value
         self._timestamps: Dict[str, Dict[str, float]] = {}  # symbol -> feature_name -> timestamp
         self._history: Dict[str, deque] = {}  # symbol -> feature history
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def update_feature(self, symbol: str, feature_name: str, value: Any):
         """Update a feature value."""

@@ -11,8 +11,8 @@ import sys
 import json
 import time
 import threading
-import hashlib
 import secrets
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from functools import wraps
@@ -29,9 +29,13 @@ try:
         url_for, session, flash, Response
     )
     HAS_FLASK = True
+    from werkzeug.security import check_password_hash, generate_password_hash
 except ImportError:
     HAS_FLASK = False
     print("Flask not installed. Run: pip install flask")
+
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Configuration
@@ -45,7 +49,7 @@ class WebConfig:
     debug: bool = False
     secret_key: str = ""
     admin_username: str = "admin"
-    admin_password_hash: str = ""  # SHA256 hash
+    admin_password_hash: str = ""  # Werkzeug password hash
     session_lifetime_hours: int = 24
 
 
@@ -307,8 +311,8 @@ class TradingState:
                                     price = quote.get("ask_price") or quote.get("bid_price", 0)
                                     if price:
                                         self.update_price(symbol, float(price))
-                            except:
-                                pass
+                            except Exception as exc:
+                                self.add_error(f"Stock price update failed for {symbol}: {exc}", "prices")
 
                         # Fetch crypto prices
                         for symbol in crypto:
@@ -318,8 +322,8 @@ class TradingState:
                                     price = quote.get("ask_price") or quote.get("bid_price", 0)
                                     if price:
                                         self.update_price(symbol, float(price))
-                            except:
-                                pass
+                            except Exception as exc:
+                                self.add_error(f"Crypto price update failed for {symbol}: {exc}", "prices")
 
                     self.api_calls += len(symbols) + len(crypto)
 
@@ -379,7 +383,8 @@ class TradingState:
 
         try:
             return self.alpaca_client.get_account()
-        except:
+        except Exception as exc:
+            self.add_error(f"Account info fetch failed: {exc}", "alpaca")
             return {}
 
     def get_alpaca_positions(self) -> List[Dict]:
@@ -389,7 +394,8 @@ class TradingState:
 
         try:
             return self.alpaca_client.get_positions()
-        except:
+        except Exception as exc:
+            self.add_error(f"Alpaca positions fetch failed: {exc}", "alpaca")
             return []
 
     def place_order(self, symbol: str, qty: int, side: str,
@@ -430,6 +436,32 @@ trading_state = TradingState()
 # Flask Application
 # =============================================================================
 
+UNSAFE_HTTP_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def make_admin_password_hash(password: str) -> str:
+    """Create a strong password hash for dashboard authentication."""
+    if not password:
+        raise ValueError("Admin password cannot be empty")
+    return generate_password_hash(password, method="pbkdf2:sha256", salt_length=16)
+
+
+def _resolve_admin_password_hash(config: WebConfig) -> str:
+    """Resolve the configured admin password hash, failing closed if absent."""
+    configured_hash = config.admin_password_hash or os.environ.get("ADMIN_PASSWORD_HASH", "")
+    if configured_hash:
+        return configured_hash
+
+    env_password = os.environ.get("ADMIN_PASSWORD", "")
+    if env_password:
+        return make_admin_password_hash(env_password)
+
+    raise RuntimeError(
+        "Dashboard admin credentials are not configured. Set ADMIN_PASSWORD_HASH, "
+        "set ADMIN_PASSWORD for local startup, or pass WebConfig(admin_password_hash=...)."
+    )
+
+
 def create_app(config: Optional[WebConfig] = None) -> Flask:
     """Create Flask application."""
 
@@ -448,26 +480,61 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=config.session_lifetime_hours)
 
     # Store config
+    config.admin_password_hash = _resolve_admin_password_hash(config)
     app.config["WEB_CONFIG"] = config
 
     # ==========================================================================
     # Authentication
     # ==========================================================================
 
-    def hash_password(password: str) -> str:
-        """Hash a password using SHA256."""
-        return hashlib.sha256(password.encode()).hexdigest()
-
     def check_auth(username: str, password: str) -> bool:
         """Check authentication credentials."""
         cfg = app.config["WEB_CONFIG"]
+        if username != cfg.admin_username:
+            return False
 
-        if cfg.admin_password_hash:
-            return (username == cfg.admin_username and
-                    hash_password(password) == cfg.admin_password_hash)
-        else:
-            # Default password is 'admin' if not configured
-            return username == "admin" and password == "admin"
+        try:
+            return check_password_hash(cfg.admin_password_hash, password)
+        except (TypeError, ValueError):
+            logger.error("Invalid admin password hash configuration")
+            return False
+
+    def csrf_token() -> str:
+        """Return the current session CSRF token, creating one if needed."""
+        token = session.get("_csrf_token")
+        if not token:
+            token = secrets.token_urlsafe(32)
+            session["_csrf_token"] = token
+        return token
+
+    def _csrf_failure():
+        """Return an appropriate response for invalid CSRF tokens."""
+        if request.path.startswith("/api/") or request.is_json:
+            return jsonify({"success": False, "error": "Invalid or missing CSRF token"}), 400
+        flash("Your session expired. Please try again.", "error")
+        return redirect(url_for("login"))
+
+    @app.before_request
+    def csrf_protect():
+        """Protect all browser-session state mutations with a CSRF token."""
+        if request.method not in UNSAFE_HTTP_METHODS:
+            return None
+
+        expected = session.get("_csrf_token")
+        provided = (
+            request.headers.get("X-CSRF-Token")
+            or request.form.get("_csrf_token")
+            or request.args.get("_csrf_token")
+        )
+
+        if not expected or not provided or not secrets.compare_digest(str(expected), str(provided)):
+            return _csrf_failure()
+        return None
+
+    @app.context_processor
+    def inject_csrf_token():
+        """Expose CSRF token helper to templates."""
+        return {"csrf_token": csrf_token}
 
     def login_required(f):
         """Decorator to require login."""
@@ -499,6 +566,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if check_auth(username, password):
                 session["logged_in"] = True
                 session["username"] = username
+                session["_csrf_token"] = secrets.token_urlsafe(32)
                 session.permanent = True
                 return redirect(url_for("index"))
             else:
@@ -741,13 +809,21 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         try:
             data = request.get_json() or {}
             symbol = data.get("symbol")
-            qty = int(data.get("qty", 0))
-            side = data.get("side", "buy")
-            order_type = data.get("type", "market")
+            try:
+                qty = int(data.get("qty", 0))
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "Quantity must be a positive integer"})
+
+            side = str(data.get("side", "buy")).lower()
+            order_type = str(data.get("type", "market")).lower()
             limit_price = data.get("price")
 
             if not symbol or qty <= 0:
                 return jsonify({"success": False, "error": "Invalid order parameters"})
+            if side not in {"buy", "sell"}:
+                return jsonify({"success": False, "error": "Invalid order side"})
+            if order_type not in {"market", "limit", "stop", "stop_limit"}:
+                return jsonify({"success": False, "error": "Invalid order type"})
 
             result = trading_state.place_order(symbol, qty, side, order_type, limit_price)
             return jsonify(result)
@@ -1037,8 +1113,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                         "histogram": result.histogram,
                         "timestamps": timestamps
                     }
-                except:
-                    pass
+                except Exception as exc:
+                    logger.warning("Indicator calculation failed for %s/%s: %s", symbol, ind_name, exc)
 
             return jsonify({
                 "success": True,
@@ -1070,8 +1146,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if strategy:
                 return render_template("strategy_detail.html",
                                      strategy=strategy, stats=trading_state.get_stats())
-        except:
-            pass
+        except Exception as exc:
+            logger.warning("Marketplace strategy detail failed for %s: %s", strategy_id, exc)
         return redirect(url_for("marketplace"))
 
     @app.route("/leaderboard")
@@ -1097,8 +1173,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if category:
                 try:
                     cat_enum = StrategyCategory(category)
-                except:
-                    pass
+                except ValueError:
+                    logger.warning("Invalid marketplace category requested: %s", category)
 
             strategies = mp.list_strategies(
                 category=cat_enum,
@@ -1273,7 +1349,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                     "win_rate": s.performance.win_rate
                 }
             } for s in strategies])
-        except:
+        except Exception as exc:
+            logger.warning("Featured strategies fetch failed: %s", exc)
             return jsonify([])
 
     @app.route("/api/marketplace/trending")
@@ -1291,7 +1368,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "views": s.views,
                 "performance": {"total_return": s.performance.total_return}
             } for s in strategies])
-        except:
+        except Exception as exc:
+            logger.warning("Trending strategies fetch failed: %s", exc)
             return jsonify([])
 
     @app.route("/api/marketplace/top-performers")
@@ -1311,7 +1389,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                     "sharpe_ratio": s.performance.sharpe_ratio
                 }
             } for s in strategies])
-        except:
+        except Exception as exc:
+            logger.warning("Top performers fetch failed: %s", exc)
             return jsonify([])
 
     # ==========================================================================
@@ -1399,7 +1478,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "trades_copied": s.trades_copied,
                 "total_pnl": s.total_pnl
             } for s in settings])
-        except:
+        except Exception as exc:
+            logger.warning("Copy trading settings fetch failed: %s", exc)
             return jsonify([])
 
     @app.route("/api/copy-trading/<settings_id>/disable", methods=["POST"])
@@ -2130,7 +2210,7 @@ def run_server(
     host: str = "0.0.0.0",
     port: int = 5000,
     debug: bool = False,
-    admin_password: str = "admin"
+    admin_password: Optional[str] = None
 ):
     """Run the web server."""
 
@@ -2151,14 +2231,14 @@ def run_server(
         host=host,
         port=port,
         debug=debug,
-        admin_password_hash=hashlib.sha256(admin_password.encode()).hexdigest()
+        admin_password_hash=make_admin_password_hash(admin_password) if admin_password else ""
     )
 
     # Create app
     app = create_app(config)
 
     print(f"\n  Server: http://{host}:{port}")
-    print(f"  Admin Login: admin / {admin_password}")
+    print("  Admin Login: configured admin user")
     print("\n  Press Ctrl+C to stop.\n")
 
     # Run server
@@ -2172,7 +2252,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=5000, help="Port to listen on")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-    parser.add_argument("--password", default="admin", help="Admin password")
+    parser.add_argument("--password", default=None, help="Admin password for local startup")
 
     args = parser.parse_args()
 

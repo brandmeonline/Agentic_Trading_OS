@@ -213,7 +213,7 @@ class RiskManager:
             return 0.7  # Reduce on cold streak
         return 1.0
 
-    def get_position_size(
+    def calculate_position_size(
         self,
         asset: str,
         confidence: float,
@@ -221,7 +221,7 @@ class RiskManager:
         stop_loss_pct: Optional[float] = None
     ) -> float:
         """
-        Calculate optimal position size using multiple factors.
+        Calculate optimal position size using multiple factors without mutating exposure.
 
         Args:
             asset: Asset symbol
@@ -285,12 +285,66 @@ class RiskManager:
         max_portfolio = self.capital * self.config.max_portfolio_exposure
         size = min(size, max_portfolio - total_exposure)
 
-        # Update exposure tracking
-        final_size = max(0, round(size, 2))
-        if final_size > 0:
-            self.asset_exposure[asset] = self.asset_exposure.get(asset, 0) + final_size
+        return max(0, round(size, 2))
 
-        return final_size
+    def get_position_size(
+        self,
+        asset: str,
+        confidence: float,
+        entry_price: Optional[float] = None,
+        stop_loss_pct: Optional[float] = None
+    ) -> float:
+        """
+        Backward-compatible pure position sizing wrapper.
+
+        Exposure is intentionally not updated here. Call reserve_exposure() when
+        an order is accepted, or apply_fill() when a fill changes open exposure.
+        """
+        return self.calculate_position_size(asset, confidence, entry_price, stop_loss_pct)
+
+    def reserve_exposure(self, asset: str, notional: float) -> bool:
+        """Reserve exposure for an accepted order if limits allow it."""
+        if notional <= 0:
+            return False
+
+        current_exposure = self.asset_exposure.get(asset, 0.0)
+        total_exposure = sum(self.asset_exposure.values())
+        max_asset_exposure = self.capital * self.config.max_position_concentration
+        max_portfolio = self.capital * self.config.max_portfolio_exposure
+
+        if current_exposure + notional > max_asset_exposure:
+            return False
+        if total_exposure + notional > max_portfolio:
+            return False
+
+        self.asset_exposure[asset] = round(current_exposure + notional, 2)
+        return True
+
+    def release_exposure(self, asset: str, notional: float) -> None:
+        """Release previously reserved or open exposure."""
+        if notional <= 0:
+            return
+
+        current_exposure = self.asset_exposure.get(asset, 0.0)
+        remaining = max(0.0, current_exposure - notional)
+        if remaining == 0:
+            self.asset_exposure.pop(asset, None)
+        else:
+            self.asset_exposure[asset] = round(remaining, 2)
+
+    def apply_fill(self, asset: str, notional_delta: float) -> None:
+        """
+        Apply a confirmed fill's exposure delta.
+
+        Positive deltas increase open exposure; negative deltas reduce it.
+        """
+        if notional_delta > 0:
+            self.asset_exposure[asset] = round(
+                self.asset_exposure.get(asset, 0.0) + notional_delta,
+                2
+            )
+        elif notional_delta < 0:
+            self.release_exposure(asset, abs(notional_delta))
 
     def update_after_trade(self, asset: str, pnl: float, return_pct: Optional[float] = None) -> None:
         """
@@ -338,10 +392,6 @@ class RiskManager:
         elif len(self.pnl_history) > 1:
             implied_return = pnl / max(self.capital - pnl, 1)
             self._update_volatility(implied_return)
-
-        # Update exposure
-        if asset in self.asset_exposure:
-            self.asset_exposure[asset] = max(0, self.asset_exposure[asset] - abs(pnl))
 
         # Check for risk events
         self._check_risk_events()
@@ -533,10 +583,14 @@ class RiskManager:
     def set_position(self, asset: str, position: Position) -> None:
         """Track an open position."""
         self.positions[asset] = position
+        self.asset_exposure[asset] = round(max(0.0, position.market_value), 2)
 
     def close_position(self, asset: str) -> Optional[Position]:
         """Close and return a position."""
-        return self.positions.pop(asset, None)
+        position = self.positions.pop(asset, None)
+        if position:
+            self.release_exposure(asset, position.market_value)
+        return position
 
 
 if __name__ == "__main__":

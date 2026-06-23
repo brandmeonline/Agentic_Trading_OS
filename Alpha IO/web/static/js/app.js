@@ -11,6 +11,35 @@ let eventSource = null;
 let lastPrices = {};
 
 // =============================================================================
+// CSRF Protection
+// =============================================================================
+
+const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const nativeFetch = window.fetch.bind(window);
+
+function getCsrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute('content') : '';
+}
+
+window.fetch = function(input, init = {}) {
+    const request = input instanceof Request ? input : null;
+    const method = (init.method || request?.method || 'GET').toUpperCase();
+    const url = new URL(request?.url || input, window.location.origin);
+
+    if (unsafeMethods.has(method) && url.origin === window.location.origin) {
+        const headers = new Headers(init.headers || request?.headers || {});
+        const token = getCsrfToken();
+        if (token) {
+            headers.set('X-CSRF-Token', token);
+        }
+        init = { ...init, headers };
+    }
+
+    return nativeFetch(input, init);
+};
+
+// =============================================================================
 // Real-time Updates
 // =============================================================================
 

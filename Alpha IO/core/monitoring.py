@@ -177,7 +177,7 @@ class Histogram(Metric):
         self.bucket_counts = [0] * (len(self.buckets) + 1)
         self.sum = 0.0
         self.count = 0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def observe(self, value: float):
         """Record an observation."""

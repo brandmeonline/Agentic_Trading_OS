@@ -192,7 +192,7 @@ class JWTAuth:
             ).digest()
             expected_sig_b64 = base64.urlsafe_b64encode(expected_sig).decode().rstrip("=")
 
-            if signature_b64 != expected_sig_b64:
+            if not hmac.compare_digest(signature_b64, expected_sig_b64):
                 return None
 
             # Decode payload

@@ -7,26 +7,35 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from web.app import WebConfig, create_app
+from web.app import WebConfig, create_app, make_admin_password_hash
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _authed_client():
-    app = create_app(WebConfig(secret_key="test-secret", debug=False))
+    app = create_app(WebConfig(
+        secret_key="test-secret",
+        debug=False,
+        admin_password_hash=make_admin_password_hash("correct horse battery staple")
+    ))
     app.config["TESTING"] = True
     client = app.test_client()
     with client.session_transaction() as sess:
         sess["logged_in"] = True
         sess["username"] = "admin"
+        sess["_csrf_token"] = "test-csrf-token"
     return client
 
 
 # Milestone 1
 
 def test_m1_health_endpoint_contract():
-    app = create_app(WebConfig(secret_key="test-secret", debug=False))
+    app = create_app(WebConfig(
+        secret_key="test-secret",
+        debug=False,
+        admin_password_hash=make_admin_password_hash("correct horse battery staple")
+    ))
     app.config["TESTING"] = True
     client = app.test_client()
     r = client.get("/api/health")
@@ -38,7 +47,11 @@ def test_m1_health_endpoint_contract():
 
 
 def test_m1_route_guard_redirects_anonymous_users():
-    app = create_app(WebConfig(secret_key="test-secret", debug=False))
+    app = create_app(WebConfig(
+        secret_key="test-secret",
+        debug=False,
+        admin_password_hash=make_admin_password_hash("correct horse battery staple")
+    ))
     app.config["TESTING"] = True
     client = app.test_client()
     r = client.get("/", follow_redirects=False)
@@ -69,7 +82,11 @@ def test_m3_training_workspace_route_renders():
 
 def test_m4_manual_trade_validation_blocks_bad_payload():
     client = _authed_client()
-    r = client.post("/api/place-order", json={"symbol": "", "qty": 0, "side": "buy"})
+    r = client.post(
+        "/api/place-order",
+        json={"symbol": "", "qty": 0, "side": "buy"},
+        headers={"X-CSRF-Token": "test-csrf-token"}
+    )
     assert r.status_code == 200
     body = r.get_json()
     assert body["success"] is False

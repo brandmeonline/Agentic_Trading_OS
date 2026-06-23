@@ -15,6 +15,8 @@ import uuid
 import time
 from collections import deque
 
+from core.ledger import TradingLedger
+
 
 class OrderType(Enum):
     """Types of orders."""
@@ -155,8 +157,13 @@ class ExecutionEngine:
     - Position tracking
     """
 
-    def __init__(self, config: Optional[ExecutionConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ExecutionConfig] = None,
+        ledger: Optional[TradingLedger] = None,
+    ):
         self.config = config or ExecutionConfig()
+        self.ledger = ledger
 
         # Order management
         self.orders: Dict[str, Order] = {}
@@ -232,6 +239,20 @@ class ExecutionEngine:
 
         self.orders[order.id] = order
         self.total_orders += 1
+        if self.ledger:
+            self.ledger.record_order(
+                order_id=order.id,
+                symbol=order.asset,
+                side=order.side.value,
+                quantity=order.quantity,
+                order_type=order.order_type.value,
+                price=order.price,
+                status=order.status.value,
+                metadata={
+                    "signal_id": signal_id,
+                    "strategy": strategy,
+                },
+            )
 
         return order
 
@@ -253,6 +274,7 @@ class ExecutionEngine:
         if order.quantity <= 0:
             order.status = OrderStatus.REJECTED
             self.rejected_orders += 1
+            self._mark_ledger_status(order)
             return ExecutionResult(
                 success=False,
                 order=order,
@@ -261,6 +283,7 @@ class ExecutionEngine:
 
         order.status = OrderStatus.SUBMITTED
         order.submitted_at = datetime.now()
+        self._mark_ledger_status(order)
 
         # Execute based on algorithm
         if algo == ExecutionAlgo.IMMEDIATE:
@@ -281,6 +304,9 @@ class ExecutionEngine:
             return self._simulate_fill(order)
 
         # Real execution would go here
+        order.status = OrderStatus.REJECTED
+        self.rejected_orders += 1
+        self._mark_ledger_status(order)
         return ExecutionResult(
             success=False,
             order=order,
@@ -323,6 +349,7 @@ class ExecutionEngine:
             order.status = OrderStatus.FILLED
             order.filled_at = datetime.now()
             self._update_position(order)
+            self._record_ledger_fill(order)
             self.filled_orders += 1
             self.total_volume += total_qty
 
@@ -334,6 +361,7 @@ class ExecutionEngine:
 
         order.status = OrderStatus.REJECTED
         self.rejected_orders += 1
+        self._mark_ledger_status(order)
         return ExecutionResult(
             success=False,
             order=order,
@@ -366,6 +394,7 @@ class ExecutionEngine:
             order.status = OrderStatus.FILLED
             order.filled_at = datetime.now()
             self._update_position(order)
+            self._record_ledger_fill(order)
             self.filled_orders += 1
             self.total_volume += order.filled_quantity
 
@@ -376,6 +405,9 @@ class ExecutionEngine:
             )
 
         order.status = OrderStatus.PARTIAL
+        if order.filled_quantity > 0:
+            self._record_ledger_fill(order)
+        self._mark_ledger_status(order)
         return ExecutionResult(
             success=False,
             order=order,
@@ -389,6 +421,7 @@ class ExecutionEngine:
         if execution_price is None:
             order.status = OrderStatus.REJECTED
             self.rejected_orders += 1
+            self._mark_ledger_status(order)
             return ExecutionResult(
                 success=False,
                 order=order,
@@ -423,6 +456,7 @@ class ExecutionEngine:
 
         # Update position
         self._update_position(order)
+        self._record_ledger_fill(order)
 
         # Update statistics
         self.filled_orders += 1
@@ -476,11 +510,46 @@ class ExecutionEngine:
         else:
             self.positions[order.asset] = current_pos - order.filled_quantity
 
+    def _record_ledger_fill(self, order: Order) -> None:
+        """Record order fills in the canonical ledger."""
+        if not self.ledger:
+            return
+
+        recorded_qty = 0.0
+        ledger_order = self.ledger.orders.get(order.id)
+        if ledger_order:
+            recorded_qty = ledger_order.filled_quantity
+
+        new_qty = order.filled_quantity - recorded_qty
+        if new_qty <= 0:
+            self._mark_ledger_status(order)
+            return
+
+        fill_price = order.avg_fill_price or order.filled_price
+        if fill_price <= 0:
+            self._mark_ledger_status(order)
+            return
+
+        self.ledger.record_fill(
+            order_id=order.id,
+            symbol=order.asset,
+            side=order.side.value,
+            quantity=new_qty,
+            price=fill_price,
+            timestamp=order.filled_at or datetime.now(),
+        )
+
+    def _mark_ledger_status(self, order: Order) -> None:
+        """Mirror order status to the canonical ledger."""
+        if self.ledger:
+            self.ledger.mark_order_status(order.id, order.status.value)
+
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order."""
         order = self.orders.get(order_id)
         if order and order.is_active:
             order.status = OrderStatus.CANCELLED
+            self._mark_ledger_status(order)
             return True
         return False
 

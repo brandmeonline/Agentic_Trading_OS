@@ -26,6 +26,7 @@
             {% endwith %}
 
             <form method="POST" class="login-form">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <input type="text" id="username" name="username" required autofocus>
@@ -40,7 +41,7 @@
             </form>
 
             <div class="login-footer">
-                <p>Default: admin / admin</p>
+                <p>Use your configured administrator credentials.</p>
             </div>
         </div>
     </div>
