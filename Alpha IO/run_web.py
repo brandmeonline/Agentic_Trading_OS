@@ -45,11 +45,21 @@ def main():
     host = os.environ.get('WEB_HOST', '0.0.0.0')
     port = int(os.environ.get('WEB_PORT', '5000'))
     debug = os.environ.get('WEB_DEBUG', '').lower() == 'true'
-    password = os.environ.get('WEB_PASSWORD', 'admin')
+    password = os.environ.get('WEB_PASSWORD') or os.environ.get('ADMIN_PASSWORD')
+    has_password_hash = bool(os.environ.get('ADMIN_PASSWORD_HASH'))
+
+    if not password and not has_password_hash:
+        print("Admin credentials are not configured.")
+        print("Set ADMIN_PASSWORD_HASH, or set ADMIN_PASSWORD/WEB_PASSWORD for local startup.")
+        return 1
+
+    if not debug and not (os.environ.get('WEB_SECRET_KEY') or os.environ.get('SECRET_KEY')):
+        print("WEB_SECRET_KEY or SECRET_KEY is required when WEB_DEBUG is not true.")
+        return 1
 
     print(f"\n  Starting web server...")
     print(f"  URL: http://localhost:{port}")
-    print(f"  Login: admin / {password}")
+    print("  Login: configured admin user")
     print("\n  Press Ctrl+C to stop.\n")
 
     run_server(
@@ -58,6 +68,7 @@ def main():
         debug=debug,
         admin_password=password
     )
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

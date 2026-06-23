@@ -571,16 +571,31 @@ class UnifiedTradingEngine:
     - Performance monitoring
     """
 
-    def __init__(self, config: Optional[SystemConfig] = None):
+    def __init__(
+        self,
+        config: Optional[SystemConfig] = None,
+        execution_engine: Optional[ExecutionEngine] = None,
+    ):
         self.config = config or SystemConfig()
+        if self.config.mode == SystemMode.LIVE and execution_engine is None:
+            raise RuntimeError(
+                "Live mode requires an explicit execution engine backed by a real broker adapter"
+            )
 
         # Initialize components
         self.signal_aggregator = SignalAggregator(self.config)
         self.ledger = TradingLedger(initial_cash=self.config.initial_capital)
-        self.execution_engine = ExecutionEngine(
-            ExecutionConfig(simulation_mode=self.config.mode != SystemMode.LIVE),
-            ledger=self.ledger,
-        )
+        if execution_engine is not None:
+            self.execution_engine = execution_engine
+            if self.execution_engine.ledger is None:
+                self.execution_engine.ledger = self.ledger
+            else:
+                self.ledger = self.execution_engine.ledger
+        else:
+            self.execution_engine = ExecutionEngine(
+                ExecutionConfig(simulation_mode=True),
+                ledger=self.ledger,
+            )
         self.executor = TradeExecutor(self.config, execution_engine=self.execution_engine)
         self.risk_controller = RiskController(self.config)
 

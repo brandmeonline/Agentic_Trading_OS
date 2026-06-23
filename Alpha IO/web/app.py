@@ -51,6 +51,8 @@ class WebConfig:
     admin_username: str = "admin"
     admin_password_hash: str = ""  # Werkzeug password hash
     session_lifetime_hours: int = 24
+    login_max_attempts: int = 5
+    login_lockout_seconds: int = 900
 
 
 # =============================================================================
@@ -462,6 +464,16 @@ def _resolve_admin_password_hash(config: WebConfig) -> str:
     )
 
 
+def _resolve_secret_key(config: WebConfig) -> str:
+    """Resolve Flask secret key, failing closed outside debug mode."""
+    secret_key = config.secret_key or os.environ.get("WEB_SECRET_KEY") or os.environ.get("SECRET_KEY")
+    if secret_key:
+        return secret_key
+    if config.debug:
+        return secrets.token_hex(32)
+    raise RuntimeError("WEB_SECRET_KEY or WebConfig(secret_key=...) is required when debug is disabled")
+
+
 def create_app(config: Optional[WebConfig] = None) -> Flask:
     """Create Flask application."""
 
@@ -475,13 +487,17 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     )
 
     # Configure app
-    app.secret_key = config.secret_key or secrets.token_hex(32)
+    app.secret_key = _resolve_secret_key(config)
     app.config["SESSION_PERMANENT"] = True
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=config.session_lifetime_hours)
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = not config.debug
 
     # Store config
     config.admin_password_hash = _resolve_admin_password_hash(config)
     app.config["WEB_CONFIG"] = config
+    login_failures: Dict[str, List[float]] = {}
 
     # ==========================================================================
     # Authentication
@@ -498,6 +514,26 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         except (TypeError, ValueError):
             logger.error("Invalid admin password hash configuration")
             return False
+
+    def _client_key() -> str:
+        """Return a stable key for login throttling."""
+        return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+
+    def _is_login_locked(key: str) -> bool:
+        """Check whether a client is temporarily locked out."""
+        cfg = app.config["WEB_CONFIG"]
+        now = time.time()
+        failures = [ts for ts in login_failures.get(key, []) if now - ts < cfg.login_lockout_seconds]
+        login_failures[key] = failures
+        return len(failures) >= cfg.login_max_attempts
+
+    def _record_login_failure(key: str) -> None:
+        """Record a failed login attempt."""
+        login_failures.setdefault(key, []).append(time.time())
+
+    def _clear_login_failures(key: str) -> None:
+        """Clear failed login attempts after successful authentication."""
+        login_failures.pop(key, None)
 
     def csrf_token() -> str:
         """Return the current session CSRF token, creating one if needed."""
@@ -536,6 +572,17 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         """Expose CSRF token helper to templates."""
         return {"csrf_token": csrf_token}
 
+    @app.after_request
+    def add_security_headers(response):
+        """Set baseline browser security headers."""
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if not app.config["WEB_CONFIG"].debug:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return response
+
     def login_required(f):
         """Decorator to require login."""
         @wraps(f)
@@ -562,14 +609,19 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         if request.method == "POST":
             username = request.form.get("username", "")
             password = request.form.get("password", "")
+            client_key = _client_key()
 
-            if check_auth(username, password):
+            if _is_login_locked(client_key):
+                flash("Too many failed login attempts. Try again later.", "error")
+            elif check_auth(username, password):
+                _clear_login_failures(client_key)
                 session["logged_in"] = True
                 session["username"] = username
                 session["_csrf_token"] = secrets.token_urlsafe(32)
                 session.permanent = True
                 return redirect(url_for("index"))
             else:
+                _record_login_failure(client_key)
                 flash("Invalid credentials", "error")
 
         return render_template("login.html")

@@ -64,3 +64,14 @@ def test_full_signal_queue_rejects_without_blocking():
     assert engine.add_signal(signal) is True
     assert engine.add_signal(signal) is False
     assert engine.state.error_count == 1
+
+
+def test_live_mode_requires_explicit_execution_engine():
+    config = SystemConfig(mode=SystemMode.LIVE)
+
+    try:
+        UnifiedTradingEngine(config)
+    except RuntimeError as exc:
+        assert "Live mode requires" in str(exc)
+    else:
+        raise AssertionError("Live mode started without explicit execution engine")
