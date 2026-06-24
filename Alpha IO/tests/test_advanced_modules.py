@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class TestRunner:
+class ModuleTestRunner:
     """Simple test runner."""
 
     def __init__(self):
@@ -63,7 +63,7 @@ class TestRunner:
 def test_feature_engineering():
     """Test feature engineering module."""
     print("\nTesting Feature Engineering...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.feature_engine import (
@@ -141,7 +141,7 @@ def test_feature_engineering():
     except ImportError as e:
         print(f"  [SKIP] Feature engineering not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -151,13 +151,13 @@ def test_feature_engineering():
 def test_deep_learning():
     """Test deep learning module."""
     print("\nTesting Deep Learning Models...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.deep_learning import (
             LSTMAttentionModel, TemporalFusionTransformer,
             NBEATSModel, WaveNetModel, AlphaModelEnsemble,
-            DeepAlphaGenerator
+            DeepAlphaGenerator, ModelConfig
         )
 
         # Generate test data
@@ -166,75 +166,63 @@ def test_deep_learning():
         seq_len = 20
         n_features = 10
         X = np.random.randn(n_samples, seq_len, n_features)
+        config = ModelConfig(
+            input_dim=n_features,
+            hidden_dim=32,
+            output_dim=1,
+            num_layers=1,
+            num_heads=2,
+            sequence_length=seq_len,
+            forecast_horizon=5,
+        )
 
         # Test LSTM Attention
         def test_lstm():
-            model = LSTMAttentionModel(
-                input_dim=n_features,
-                hidden_dim=32,
-                output_dim=1,
-                n_layers=1
-            )
-            output = model.forward(X[0])
-            assert output.shape == (1,)
+            model = LSTMAttentionModel(config)
+            output, attention = model.forward(X[:1])
+            assert output.shape == (1, 1)
+            assert attention.shape == (1, seq_len)
 
         runner.run_test("LSTMAttentionModel forward pass", test_lstm)
 
         # Test Temporal Fusion Transformer
         def test_tft():
-            model = TemporalFusionTransformer(
-                n_features=n_features,
-                d_model=32,
-                n_heads=2,
-                n_layers=1
-            )
-            output = model.forward(X[0])
-            assert len(output) > 0
+            model = TemporalFusionTransformer(config)
+            output = model.forward(X[:1])
+            assert set(output.keys()) == set(config.quantiles)
+            assert all(pred.shape == (1, 1) for pred in output.values())
 
         runner.run_test("TemporalFusionTransformer forward pass", test_tft)
 
         # Test N-BEATS
         def test_nbeats():
-            model = NBEATSModel(
-                input_dim=seq_len,
-                output_dim=5,
-                n_blocks=2,
-                hidden_dim=32
-            )
-            # N-BEATS takes 1D input
-            output = model.forward(X[0, :, 0])
-            assert len(output) == 5
+            model = NBEATSModel(config)
+            output = model.forward(X[:2, :, 0])
+            assert output.shape == (2, config.forecast_horizon)
 
         runner.run_test("NBEATSModel forward pass", test_nbeats)
 
         # Test WaveNet
         def test_wavenet():
-            model = WaveNetModel(
-                n_features=n_features,
-                n_filters=16,
-                kernel_size=3,
-                n_blocks=2
-            )
-            output = model.forward(X[0])
-            assert len(output.shape) >= 1
+            model = WaveNetModel(config)
+            output = model.forward(X[:1])
+            assert output.shape == (1, 1)
 
         runner.run_test("WaveNetModel forward pass", test_wavenet)
 
         # Test DeepAlphaGenerator
         def test_alpha_gen():
-            generator = DeepAlphaGenerator(
-                n_features=n_features,
-                seq_len=seq_len
-            )
-            signals = generator.generate_signals(X)
-            assert len(signals) == n_samples
+            generator = DeepAlphaGenerator(config)
+            signal = generator.generate_signal(X[:4])
+            assert signal["signal_type"] in {"STRONG_BUY", "BUY", "HOLD", "SELL", "STRONG_SELL"}
+            assert "confidence" in signal
 
         runner.run_test("DeepAlphaGenerator signal generation", test_alpha_gen)
 
     except ImportError as e:
         print(f"  [SKIP] Deep learning not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -244,7 +232,7 @@ def test_deep_learning():
 def test_nlp_sentiment():
     """Test NLP sentiment analysis module."""
     print("\nTesting NLP Sentiment Analysis...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.nlp_engine import (
@@ -309,7 +297,7 @@ def test_nlp_sentiment():
     except ImportError as e:
         print(f"  [SKIP] NLP module not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -319,7 +307,7 @@ def test_nlp_sentiment():
 def test_smart_routing():
     """Test smart order routing module."""
     print("\nTesting Smart Order Routing...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.smart_router import (
@@ -388,7 +376,7 @@ def test_smart_routing():
     except ImportError as e:
         print(f"  [SKIP] Smart routing not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -398,7 +386,7 @@ def test_smart_routing():
 def test_stress_testing():
     """Test stress testing module."""
     print("\nTesting Stress Testing...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.stress_testing import (
@@ -475,7 +463,7 @@ def test_stress_testing():
     except ImportError as e:
         print(f"  [SKIP] Stress testing not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -485,7 +473,7 @@ def test_stress_testing():
 def test_advanced_backtest():
     """Test advanced backtesting module."""
     print("\nTesting Advanced Backtesting...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.advanced_backtest import (
@@ -554,7 +542,7 @@ def test_advanced_backtest():
     except ImportError as e:
         print(f"  [SKIP] Advanced backtesting not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -564,7 +552,7 @@ def test_advanced_backtest():
 def test_unified_system():
     """Test unified trading system."""
     print("\nTesting Unified Trading System...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.unified_system import (
@@ -666,7 +654,7 @@ def test_unified_system():
     except ImportError as e:
         print(f"  [SKIP] Unified system not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -676,7 +664,7 @@ def test_unified_system():
 def test_monitoring():
     """Test monitoring module."""
     print("\nTesting Monitoring System...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.monitoring import (
@@ -759,7 +747,7 @@ def test_monitoring():
     except ImportError as e:
         print(f"  [SKIP] Monitoring not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================
@@ -769,7 +757,7 @@ def test_monitoring():
 def test_realtime_data():
     """Test real-time data module."""
     print("\nTesting Real-Time Data Infrastructure...")
-    runner = TestRunner()
+    runner = ModuleTestRunner()
 
     try:
         from core.realtime_data import (
@@ -842,7 +830,7 @@ def test_realtime_data():
     except ImportError as e:
         print(f"  [SKIP] Real-time data not available: {e}")
 
-    return runner.summary()
+    assert runner.summary()
 
 
 # =============================================================================

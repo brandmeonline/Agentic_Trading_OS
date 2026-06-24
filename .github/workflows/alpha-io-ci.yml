@@ -1,0 +1,56 @@
+name: Alpha IO CI
+
+on:
+  pull_request:
+    paths:
+      - "Alpha IO/**"
+      - ".github/workflows/alpha-io-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Alpha IO/**"
+      - ".github/workflows/alpha-io-ci.yml"
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install regression dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas flask werkzeug cryptography pytest scikit-learn
+
+      - name: Compile Alpha IO
+        run: python -m compileall -q "Alpha IO"
+
+      - name: Run explicit regression suite
+        run: |
+          python -m pytest -q \
+            "Alpha IO/tests/test_advanced_modules.py" \
+            "Alpha IO/tests/test_agent.py" \
+            "Alpha IO/tests/test_credentials_security.py" \
+            "Alpha IO/tests/test_ledger_execution.py" \
+            "Alpha IO/tests/test_plan_milestones.py" \
+            "Alpha IO/tests/test_rest_api_security.py" \
+            "Alpha IO/tests/test_risk.py" \
+            "Alpha IO/tests/test_run_web_security.py" \
+            "Alpha IO/tests/test_unified_engine.py" \
+            "Alpha IO/tests/test_web_security.py"
+
+      - name: Run optional Alpaca paper smoke
+        if: ${{ env.ALPACA_API_KEY != '' && env.ALPACA_API_SECRET != '' }}
+        run: python -m pytest -q "Alpha IO/tests/test_alpaca_paper_smoke.py"

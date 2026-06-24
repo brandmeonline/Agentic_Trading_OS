@@ -19,12 +19,15 @@ import hmac
 import base64
 import secrets
 import threading
-from dataclasses import dataclass, field, asdict
+import logging
+from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
 from datetime import datetime, timedelta
 from functools import wraps
 import queue
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -59,6 +62,7 @@ class APIConfig:
     max_request_size_mb: int = 10
     enable_websocket: bool = True
     enable_swagger: bool = True
+    simulation_mode: bool = True
 
 
 @dataclass
@@ -361,8 +365,9 @@ class Router:
 class TradingAPIHandlers:
     """Trading API endpoint handlers."""
 
-    def __init__(self, trading_system: Any = None):
+    def __init__(self, trading_system: Any = None, simulation_mode: bool = True):
         self.trading_system = trading_system
+        self.simulation_mode = simulation_mode
         self._mock_balances = {
             "BTC": {"free": 1.5, "locked": 0.2, "total": 1.7},
             "ETH": {"free": 10.0, "locked": 1.0, "total": 11.0},
@@ -371,28 +376,123 @@ class TradingAPIHandlers:
         self._mock_positions = []
         self._mock_orders = {}
 
+    def _live_adapter_unavailable(self) -> APIResponse:
+        """Return fail-closed response when live mode lacks a backing adapter."""
+        return APIResponse(
+            status_code=503,
+            body={
+                "success": False,
+                "error": "Live trading adapter is not configured",
+                "mode": "live",
+                "simulated": False,
+            },
+        )
+
+    def _live_adapter_error(self, method_name: str, exc: Exception) -> APIResponse:
+        """Return a generic upstream error without exposing adapter internals."""
+        logger.exception("Live trading adapter method failed: %s", method_name)
+        return APIResponse(
+            status_code=502,
+            body={
+                "success": False,
+                "error": "Live trading adapter request failed",
+                "mode": "live",
+                "simulated": False,
+            },
+        )
+
+    def _live_method(self, method_name: str) -> Optional[Callable]:
+        """Return a callable live-adapter method if available."""
+        if self.simulation_mode or self.trading_system is None:
+            return None
+        method = getattr(self.trading_system, method_name, None)
+        return method if callable(method) else None
+
+    def _call_live_method(
+        self,
+        method_name: str,
+        *args: Any,
+        status_code: int = 200,
+        **kwargs: Any,
+    ) -> APIResponse:
+        """Call a live-adapter method or fail closed if it is unavailable."""
+        method = self._live_method(method_name)
+        if not method:
+            return self._live_adapter_unavailable()
+
+        try:
+            data = method(*args, **kwargs)
+        except Exception as exc:
+            return self._live_adapter_error(method_name, exc)
+
+        return self._live_success(data, status_code=status_code)
+
+    def _live_success(self, data: Any, status_code: int = 200) -> APIResponse:
+        """Wrap live-adapter data in an explicit non-simulated response."""
+        return APIResponse(
+            status_code=status_code,
+            body={
+                "success": True,
+                "data": self._serialize_data(data),
+                "mode": "live",
+                "simulated": False,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    def _simulation_success(self, data: Any, status_code: int = 200) -> APIResponse:
+        """Wrap simulation data in an explicit simulated response."""
+        return APIResponse(
+            status_code=status_code,
+            body={
+                "success": True,
+                "data": data,
+                "mode": "simulation",
+                "simulated": True,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    def _serialize_data(self, value: Any) -> Any:
+        """Serialize adapter dataclasses, enums, datetimes, and containers."""
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if is_dataclass(value):
+            return self._serialize_data(asdict(value))
+        if isinstance(value, dict):
+            return {
+                key: self._serialize_data(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_data(item) for item in value]
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            return self._serialize_data(to_dict())
+        if hasattr(value, "__dict__") and not isinstance(value, type):
+            return {
+                key: self._serialize_data(item)
+                for key, item in vars(value).items()
+                if not key.startswith("_")
+            }
+        return value
+
     # Account endpoints
     def get_balances(self, request: APIRequest, params: Dict) -> APIResponse:
         """Get account balances."""
-        return APIResponse(
-            status_code=200,
-            body={
-                "success": True,
-                "data": self._mock_balances,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
+        if not self.simulation_mode:
+            return self._call_live_method("get_balances")
+
+        return self._simulation_success(self._mock_balances)
 
     def get_positions(self, request: APIRequest, params: Dict) -> APIResponse:
         """Get open positions."""
-        return APIResponse(
-            status_code=200,
-            body={
-                "success": True,
-                "data": self._mock_positions,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
+        if not self.simulation_mode:
+            return self._call_live_method("get_positions")
+
+        return self._simulation_success(self._mock_positions)
 
     # Order endpoints
     def place_order(self, request: APIRequest, params: Dict) -> APIResponse:
@@ -406,6 +506,9 @@ class TradingAPIHandlers:
                     status_code=400,
                     body={"success": False, "error": f"Missing required field: {field}"}
                 )
+
+        if not self.simulation_mode:
+            return self._call_live_method("place_order", dict(body), status_code=201)
 
         order_id = f"ord_{secrets.token_hex(8)}"
         order = {
@@ -422,17 +525,14 @@ class TradingAPIHandlers:
 
         self._mock_orders[order_id] = order
 
-        return APIResponse(
-            status_code=201,
-            body={
-                "success": True,
-                "data": order,
-            }
-        )
+        return self._simulation_success(order, status_code=201)
 
     def get_order(self, request: APIRequest, params: Dict) -> APIResponse:
         """Get order by ID."""
         order_id = params.get("order_id")
+        if not self.simulation_mode:
+            return self._call_live_method("get_order", order_id)
+
         if order_id not in self._mock_orders:
             return APIResponse(
                 status_code=404,
@@ -450,6 +550,9 @@ class TradingAPIHandlers:
     def cancel_order(self, request: APIRequest, params: Dict) -> APIResponse:
         """Cancel an order."""
         order_id = params.get("order_id")
+        if not self.simulation_mode:
+            return self._call_live_method("cancel_order", order_id)
+
         if order_id not in self._mock_orders:
             return APIResponse(
                 status_code=404,
@@ -467,19 +570,19 @@ class TradingAPIHandlers:
 
     def get_open_orders(self, request: APIRequest, params: Dict) -> APIResponse:
         """Get all open orders."""
+        if not self.simulation_mode:
+            return self._call_live_method("get_open_orders")
+
         open_orders = [o for o in self._mock_orders.values() if o["status"] == "open"]
-        return APIResponse(
-            status_code=200,
-            body={
-                "success": True,
-                "data": open_orders,
-            }
-        )
+        return self._simulation_success(open_orders)
 
     # Market data endpoints
     def get_ticker(self, request: APIRequest, params: Dict) -> APIResponse:
         """Get ticker for symbol."""
         symbol = params.get("symbol", "BTC-USDT")
+        if not self.simulation_mode:
+            return self._call_live_method("get_ticker", symbol)
+
         return APIResponse(
             status_code=200,
             body={
@@ -500,6 +603,8 @@ class TradingAPIHandlers:
         """Get order book for symbol."""
         symbol = params.get("symbol", "BTC-USDT")
         depth = int(request.query_params.get("depth", "20"))
+        if not self.simulation_mode:
+            return self._call_live_method("get_orderbook", symbol, depth)
 
         return APIResponse(
             status_code=200,
@@ -519,6 +624,8 @@ class TradingAPIHandlers:
         symbol = params.get("symbol", "BTC-USDT")
         interval = request.query_params.get("interval", "1h")
         limit = int(request.query_params.get("limit", "100"))
+        if not self.simulation_mode:
+            return self._call_live_method("get_klines", symbol, interval, limit)
 
         # Generate mock klines
         import numpy as np
@@ -638,7 +745,10 @@ class RESTAPIServer:
         self.rate_limiter = APIRateLimiter()
         self.jwt_auth = JWTAuth(self.config.jwt_secret, self.config.jwt_expiry_hours)
         self.api_key_auth = APIKeyAuth()
-        self.handlers = TradingAPIHandlers(trading_system)
+        self.handlers = TradingAPIHandlers(
+            trading_system=trading_system,
+            simulation_mode=self.config.simulation_mode,
+        )
 
         self._running = False
         self._request_count = 0
@@ -777,7 +887,15 @@ class RESTAPIServer:
 
         except Exception as e:
             self._error_count += 1
-            return APIResponse(500, {"success": False, "error": str(e)})
+            logger.exception("Unhandled REST API error for request %s", request.request_id)
+            return APIResponse(
+                500,
+                {
+                    "success": False,
+                    "error": "Internal server error",
+                    "request_id": request.request_id,
+                },
+            )
 
     def create_user(
         self,

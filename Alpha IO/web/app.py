@@ -13,6 +13,7 @@ import time
 import threading
 import secrets
 import logging
+import copy
 from datetime import datetime, timedelta
 from pathlib import Path
 from functools import wraps
@@ -53,6 +54,8 @@ class WebConfig:
     session_lifetime_hours: int = 24
     login_max_attempts: int = 5
     login_lockout_seconds: int = 900
+    user_settings_path: str = ""
+    admin_password_hash_path: str = ""
 
 
 # =============================================================================
@@ -115,6 +118,7 @@ class TradingState:
         self._lock = threading.Lock()
         self._price_thread = None
         self._sync_thread = None
+        self._stop_event = threading.Event()
 
     def update_price(self, symbol: str, price: float):
         """Update price for a symbol."""
@@ -282,6 +286,7 @@ class TradingState:
 
             if self.alpaca_client.connect():
                 self.alpaca_connected = True
+                self._stop_event.clear()
                 self._start_price_updates()
                 return True
             else:
@@ -297,12 +302,13 @@ class TradingState:
         """Start background thread for price updates."""
         if self._price_thread and self._price_thread.is_alive():
             return
+        self._stop_event.clear()
 
         def update_prices():
             symbols = ["AAPL", "SPY", "TSLA", "MSFT", "GOOGL"]
             crypto = ["BTC/USD", "ETH/USD"]
 
-            while self.alpaca_connected:
+            while self.alpaca_connected and not self._stop_event.is_set():
                 try:
                     # Fetch stock prices
                     if self.alpaca_client:
@@ -332,7 +338,7 @@ class TradingState:
                 except Exception as e:
                     self.add_error(f"Price update error: {e}", "prices")
 
-                time.sleep(2)  # Update every 2 seconds
+                self._stop_event.wait(2)  # Update every 2 seconds
 
         self._price_thread = threading.Thread(target=update_prices, daemon=True)
         self._price_thread.start()
@@ -369,14 +375,30 @@ class TradingState:
         """Start background sync with orchestrator."""
         if self._sync_thread and self._sync_thread.is_alive():
             return
+        self._stop_event.clear()
 
         def sync_loop():
-            while self.is_running:
+            while self.is_running and not self._stop_event.is_set():
                 self.sync_from_orchestrator()
-                time.sleep(1)
+                self._stop_event.wait(1)
 
         self._sync_thread = threading.Thread(target=sync_loop, daemon=True)
         self._sync_thread.start()
+
+    def stop_background_tasks(self, timeout: float = 3.0) -> None:
+        """Stop and join dashboard background workers."""
+        self.is_running = False
+        self.alpaca_connected = False
+        self._stop_event.set()
+
+        for worker in (self._price_thread, self._sync_thread):
+            if worker and worker.is_alive():
+                worker.join(timeout=timeout)
+
+        if self._price_thread and not self._price_thread.is_alive():
+            self._price_thread = None
+        if self._sync_thread and not self._sync_thread.is_alive():
+            self._sync_thread = None
 
     def get_account_info(self) -> Dict[str, Any]:
         """Get Alpaca account info."""
@@ -427,7 +449,8 @@ class TradingState:
                 return {"success": False, "error": "Order failed"}
 
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            logger.exception("Alpaca order placement failed")
+            return {"success": False, "error": "Order placement failed"}
 
 
 # Global state
@@ -440,6 +463,28 @@ trading_state = TradingState()
 
 UNSAFE_HTTP_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
+DEFAULT_USER_SETTINGS = {
+    "general": {
+        "timezone": "America/New_York",
+        "currency": "USD",
+        "dark_mode": True,
+        "sound_alerts": False
+    },
+    "notifications": {
+        "notify_trades": True,
+        "notify_signals": True,
+        "notify_errors": True,
+        "notify_pnl": False,
+        "email": ""
+    },
+    "strategy": {
+        "strategy_mode": "momentum",
+        "timeframe": "1h",
+        "signal_threshold": 70,
+        "use_rl": False
+    }
+}
+
 
 def make_admin_password_hash(password: str) -> str:
     """Create a strong password hash for dashboard authentication."""
@@ -448,11 +493,48 @@ def make_admin_password_hash(password: str) -> str:
     return generate_password_hash(password, method="pbkdf2:sha256", salt_length=16)
 
 
+def _write_text_atomic(path: Path, content: str) -> None:
+    """Write text atomically to reduce the chance of partial config files."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                logger.warning("Failed to clean up temporary file %s", temp_path)
+
+
+def _write_json_atomic(path: Path, data: Any) -> None:
+    """Write JSON atomically to reduce the chance of partial config files."""
+    _write_text_atomic(path, json.dumps(data, indent=2))
+
+
+def _resolve_admin_password_hash_path(config: WebConfig) -> Optional[Path]:
+    """Resolve optional file-backed admin password hash storage."""
+    path = config.admin_password_hash_path or os.environ.get("ADMIN_PASSWORD_HASH_FILE", "")
+    return Path(path) if path else None
+
+
 def _resolve_admin_password_hash(config: WebConfig) -> str:
     """Resolve the configured admin password hash, failing closed if absent."""
     configured_hash = config.admin_password_hash or os.environ.get("ADMIN_PASSWORD_HASH", "")
     if configured_hash:
         return configured_hash
+
+    hash_path = _resolve_admin_password_hash_path(config)
+    if hash_path and hash_path.exists():
+        try:
+            configured_hash = hash_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(f"Failed to read admin password hash file: {hash_path}") from exc
+        if configured_hash:
+            return configured_hash
+        raise RuntimeError(f"Admin password hash file is empty: {hash_path}")
 
     env_password = os.environ.get("ADMIN_PASSWORD", "")
     if env_password:
@@ -460,7 +542,8 @@ def _resolve_admin_password_hash(config: WebConfig) -> str:
 
     raise RuntimeError(
         "Dashboard admin credentials are not configured. Set ADMIN_PASSWORD_HASH, "
-        "set ADMIN_PASSWORD for local startup, or pass WebConfig(admin_password_hash=...)."
+        "ADMIN_PASSWORD_HASH_FILE, set ADMIN_PASSWORD for local startup, or pass "
+        "WebConfig(admin_password_hash=...)."
     )
 
 
@@ -472,6 +555,48 @@ def _resolve_secret_key(config: WebConfig) -> str:
     if config.debug:
         return secrets.token_hex(32)
     raise RuntimeError("WEB_SECRET_KEY or WebConfig(secret_key=...) is required when debug is disabled")
+
+
+def _default_user_settings() -> Dict[str, Dict[str, Any]]:
+    """Return a fresh copy of dashboard settings defaults."""
+    return copy.deepcopy(DEFAULT_USER_SETTINGS)
+
+
+def _resolve_user_settings_path(config: WebConfig) -> Path:
+    """Resolve the dashboard settings persistence path."""
+    if config.user_settings_path:
+        return Path(config.user_settings_path)
+    return Path(__file__).parent.parent / "config" / "user_settings.json"
+
+
+def _merge_user_settings(raw_settings: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Merge persisted settings into defaults while ignoring unknown keys."""
+    settings = _default_user_settings()
+    for category, defaults in settings.items():
+        saved_category = raw_settings.get(category, {})
+        if not isinstance(saved_category, dict):
+            continue
+        for key in defaults:
+            if key in saved_category:
+                settings[category][key] = saved_category[key]
+    return settings
+
+
+def _load_user_settings(settings_file: Path) -> Dict[str, Dict[str, Any]]:
+    """Load dashboard settings from disk, falling back to defaults."""
+    if not settings_file.exists():
+        return _default_user_settings()
+
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            logger.warning("Ignoring invalid user settings payload at %s", settings_file)
+            return _default_user_settings()
+        return _merge_user_settings(data)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to load user settings from %s: %s", settings_file, exc)
+        return _default_user_settings()
 
 
 def create_app(config: Optional[WebConfig] = None) -> Flask:
@@ -495,6 +620,9 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     app.config["SESSION_COOKIE_SECURE"] = not config.debug
 
     # Store config
+    admin_hash_path = _resolve_admin_password_hash_path(config)
+    if admin_hash_path:
+        config.admin_password_hash_path = str(admin_hash_path)
     config.admin_password_hash = _resolve_admin_password_hash(config)
     app.config["WEB_CONFIG"] = config
     login_failures: Dict[str, List[float]] = {}
@@ -591,6 +719,16 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 return redirect(url_for("login"))
             return f(*args, **kwargs)
         return decorated
+
+    def api_internal_error(source: str, exc: Exception):
+        """Log unexpected API failures without leaking internals to clients."""
+        error_id = secrets.token_hex(8)
+        logger.exception("%s failed [error_id=%s]", source, error_id)
+        return jsonify({
+            "success": False,
+            "error": "Internal server error",
+            "error_id": error_id,
+        }), 500
 
     # ==========================================================================
     # Routes - Pages
@@ -771,7 +909,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             return jsonify({"success": True, "message": "System starting..."})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_start", e)
 
     @app.route("/api/stop", methods=["POST"])
     @login_required
@@ -784,13 +922,13 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if trading_state.orchestrator:
                 trading_state.orchestrator.stop()
 
-            trading_state.is_running = False
+            trading_state.stop_background_tasks()
             trading_state.orchestrator = None
 
             return jsonify({"success": True, "message": "System stopped"})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_stop", e)
 
     @app.route("/api/credentials", methods=["POST"])
     @login_required
@@ -816,12 +954,12 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                         trading_state.alpaca_connected = False
                         return jsonify({"success": False, "error": "Connection failed"})
                 except Exception as e:
-                    return jsonify({"success": False, "error": str(e)})
+                    return api_internal_error("api_credentials_connection", e)
 
             return jsonify({"success": False, "error": "Missing credentials"})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_credentials", e)
 
     @app.route("/api/test-connection", methods=["POST"])
     @login_required
@@ -838,7 +976,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 return jsonify({"success": False, "error": "Connection failed"})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_test_connection", e)
 
     @app.route("/api/account")
     @login_required
@@ -881,7 +1019,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             return jsonify(result)
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_place_order", e)
 
     @app.route("/api/components")
     @login_required
@@ -975,7 +1113,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
 
             return jsonify({"success": True, "alert_id": alert.id})
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_create_alert", e)
 
     @app.route("/api/alerts/<alert_id>", methods=["DELETE"])
     @login_required
@@ -987,7 +1125,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             success = manager.delete_alert(alert_id)
             return jsonify({"success": success})
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_delete_alert", e)
 
     @app.route("/api/alerts/<alert_id>/enable", methods=["POST"])
     @login_required
@@ -999,7 +1137,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             success = manager.enable_alert(alert_id)
             return jsonify({"success": success})
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_enable_alert", e)
 
     @app.route("/api/alerts/<alert_id>/disable", methods=["POST"])
     @login_required
@@ -1011,7 +1149,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             success = manager.disable_alert(alert_id)
             return jsonify({"success": success})
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_disable_alert", e)
 
     @app.route("/api/notifications", methods=["GET"])
     @login_required
@@ -1043,7 +1181,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             manager.mark_read(notification_id)
             return jsonify({"success": True})
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_mark_notification_read", e)
 
     @app.route("/api/notifications/read-all", methods=["POST"])
     @login_required
@@ -1055,7 +1193,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             manager.mark_all_read()
             return jsonify({"success": True})
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("api_mark_all_notifications_read", e)
 
     # ==========================================================================
     # Routes - Technical Indicators
@@ -2008,28 +2146,12 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # Settings API Endpoints
     # ==========================================================================
 
-    # In-memory settings storage (would be persisted to file/database in production)
-    user_settings = {
-        "general": {
-            "timezone": "America/New_York",
-            "currency": "USD",
-            "dark_mode": True,
-            "sound_alerts": False
-        },
-        "notifications": {
-            "notify_trades": True,
-            "notify_signals": True,
-            "notify_errors": True,
-            "notify_pnl": False,
-            "email": ""
-        },
-        "strategy": {
-            "strategy_mode": "momentum",
-            "timeframe": "1h",
-            "signal_threshold": 70,
-            "use_rl": False
-        }
-    }
+    settings_file = _resolve_user_settings_path(config)
+    user_settings = _load_user_settings(settings_file)
+
+    def persist_user_settings() -> None:
+        """Persist dashboard settings to disk."""
+        _write_json_atomic(settings_file, user_settings)
 
     @app.route("/api/settings", methods=["GET"])
     @login_required
@@ -2053,7 +2175,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             return jsonify({"success": False, "error": "Invalid category"})
 
         try:
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             if not data:
                 return jsonify({"success": False, "error": "No data provided"})
 
@@ -2062,23 +2184,19 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 if key in user_settings[category]:
                     user_settings[category][key] = value
 
-            # Save to file
-            settings_file = Path(__file__).parent.parent / "config" / "user_settings.json"
-            settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(settings_file, 'w') as f:
-                json.dump(user_settings, f, indent=2)
+            persist_user_settings()
 
             return jsonify({"success": True, "settings": user_settings[category]})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("update_settings", e)
 
     @app.route("/api/settings/password", methods=["POST"])
     @login_required
     def update_password():
         """Update user password."""
         try:
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             current = data.get("current_password", "")
             new_pass = data.get("new_password", "")
             confirm = data.get("confirm_password", "")
@@ -2093,12 +2211,21 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if len(new_pass) < 4:
                 return jsonify({"success": False, "error": "Password must be at least 4 characters"})
 
-            # In production, verify current password and update securely
-            # For now, just acknowledge the update
+            username = session.get("username", "")
+            if not check_auth(username, current):
+                return jsonify({"success": False, "error": "Current password is incorrect"})
+
+            cfg = app.config["WEB_CONFIG"]
+            new_hash = make_admin_password_hash(new_pass)
+            if cfg.admin_password_hash_path:
+                _write_text_atomic(Path(cfg.admin_password_hash_path), new_hash + "\n")
+            cfg.admin_password_hash = new_hash
+            session["_csrf_token"] = secrets.token_urlsafe(32)
+
             return jsonify({"success": True, "message": "Password updated successfully"})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("update_password", e)
 
     @app.route("/api/settings/export/<export_type>", methods=["GET"])
     @login_required
@@ -2122,9 +2249,8 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 )
 
             elif export_type == "positions":
-                positions = trading_state.positions
                 csv_lines = ["symbol,side,qty,entry_price,current_price,pnl"]
-                for p in positions:
+                for p in trading_state.positions.values():
                     csv_lines.append(f"{p.get('symbol','')},{p.get('side','')},{p.get('qty',0)},{p.get('entry_price',0)},{p.get('current_price',0)},{p.get('pnl',0)}")
 
                 return Response(
@@ -2151,7 +2277,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 return jsonify({"success": False, "error": "Invalid export type"})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("export_data", e)
 
     @app.route("/api/settings/reset-account", methods=["POST"])
     @login_required
@@ -2161,7 +2287,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             trading_state.current_capital = trading_state.initial_capital
             trading_state.total_pnl = 0.0
             trading_state.trades = []
-            trading_state.positions = []
+            trading_state.positions = {}
             trading_state.total_trades = 0
             trading_state.winning_trades = 0
             trading_state.losing_trades = 0
@@ -2173,7 +2299,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("reset_account", e)
 
     @app.route("/api/settings/clear-all", methods=["POST"])
     @login_required
@@ -2184,37 +2310,21 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             trading_state.current_capital = trading_state.initial_capital
             trading_state.total_pnl = 0.0
             trading_state.trades = []
-            trading_state.positions = []
+            trading_state.positions = {}
             trading_state.errors = []
             trading_state.total_trades = 0
             trading_state.winning_trades = 0
             trading_state.losing_trades = 0
 
             # Reset settings to defaults
-            user_settings["general"] = {
-                "timezone": "America/New_York",
-                "currency": "USD",
-                "dark_mode": True,
-                "sound_alerts": False
-            }
-            user_settings["notifications"] = {
-                "notify_trades": True,
-                "notify_signals": True,
-                "notify_errors": True,
-                "notify_pnl": False,
-                "email": ""
-            }
-            user_settings["strategy"] = {
-                "strategy_mode": "momentum",
-                "timeframe": "1h",
-                "signal_threshold": 70,
-                "use_rl": False
-            }
+            user_settings.clear()
+            user_settings.update(_default_user_settings())
+            persist_user_settings()
 
             return jsonify({"success": True, "message": "All data cleared"})
 
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
+            return api_internal_error("clear_all_data", e)
 
     return app
 
@@ -2262,7 +2372,8 @@ def run_server(
     host: str = "0.0.0.0",
     port: int = 5000,
     debug: bool = False,
-    admin_password: Optional[str] = None
+    admin_password: Optional[str] = None,
+    admin_password_hash_path: Optional[str] = None
 ):
     """Run the web server."""
 
@@ -2283,7 +2394,8 @@ def run_server(
         host=host,
         port=port,
         debug=debug,
-        admin_password_hash=make_admin_password_hash(admin_password) if admin_password else ""
+        admin_password_hash=make_admin_password_hash(admin_password) if admin_password else "",
+        admin_password_hash_path=admin_password_hash_path or ""
     )
 
     # Create app
@@ -2305,6 +2417,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5000, help="Port to listen on")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--password", default=None, help="Admin password for local startup")
+    parser.add_argument("--password-hash-file", default=None, help="Path to persisted admin password hash")
 
     args = parser.parse_args()
 
@@ -2312,5 +2425,6 @@ if __name__ == "__main__":
         host=args.host,
         port=args.port,
         debug=args.debug,
-        admin_password=args.password
+        admin_password=args.password,
+        admin_password_hash_path=args.password_hash_file
     )

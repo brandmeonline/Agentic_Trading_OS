@@ -73,6 +73,12 @@ class SystemConfig:
     signal_batch_size: int = 3
     signal_flush_interval_seconds: float = 5.0
     max_loop_errors: int = 3
+    ledger_persist_path: str = ""
+    ledger_sqlite_path: str = ""
+    enable_broker_reconciliation: bool = True
+    broker_reconciliation_interval_seconds: float = 30.0
+    broker_reconciliation_quantity_tolerance: float = 1e-8
+    broker_reconciliation_price_tolerance: float = 1e-6
 
 
 @dataclass
@@ -584,7 +590,11 @@ class UnifiedTradingEngine:
 
         # Initialize components
         self.signal_aggregator = SignalAggregator(self.config)
-        self.ledger = TradingLedger(initial_cash=self.config.initial_capital)
+        self.ledger = TradingLedger(
+            initial_cash=self.config.initial_capital,
+            persist_path=self.config.ledger_persist_path or None,
+            sqlite_path=self.config.ledger_sqlite_path or None,
+        )
         if execution_engine is not None:
             self.execution_engine = execution_engine
             if self.execution_engine.ledger is None:
@@ -602,8 +612,8 @@ class UnifiedTradingEngine:
         # System state
         self.state = SystemState(
             mode=self.config.mode,
-            capital=self.config.initial_capital,
-            positions={},
+            capital=self.ledger.cash,
+            positions=self._positions_from_ledger(),
             pending_signals=[],
             recent_trades=[],
             pnl_history=[],
@@ -617,6 +627,8 @@ class UnifiedTradingEngine:
         self._signal_thread: Optional[threading.Thread] = None
         self._monitor_thread: Optional[threading.Thread] = None
         self._loop_errors: Dict[str, int] = {}
+        self._last_broker_reconciliation_at = 0.0
+        self.last_broker_reconciliation: Optional[Dict[str, Any]] = None
 
         # Performance tracking
         self.metrics = {
@@ -626,6 +638,73 @@ class UnifiedTradingEngine:
             "max_drawdown": 0.0,
             "sharpe_ratio": 0.0
         }
+
+    def _positions_from_ledger(self) -> Dict[str, Position]:
+        """Hydrate engine position state from the canonical ledger projection."""
+        positions: Dict[str, Position] = {}
+        for symbol, record in self.ledger.positions.items():
+            if record.quantity == 0:
+                continue
+            side = "long" if record.quantity > 0 else "short"
+            quantity = abs(record.quantity)
+            if side == "long":
+                stop_loss = record.avg_price * (1 - self.config.stop_loss_pct)
+                take_profit = record.avg_price * (1 + self.config.take_profit_pct)
+            else:
+                stop_loss = record.avg_price * (1 + self.config.stop_loss_pct)
+                take_profit = record.avg_price * (1 - self.config.take_profit_pct)
+            positions[symbol] = Position(
+                symbol=symbol,
+                side=side,
+                entry_price=record.avg_price,
+                quantity=quantity,
+                entry_time=record.updated_at,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                realized_pnl=record.realized_pnl,
+                signal_source=SignalSource.MANUAL,
+            )
+        return positions
+
+    def reconcile_broker_positions(
+        self,
+        broker_positions: Optional[Any] = None,
+        quantity_tolerance: float = 1e-8,
+        price_tolerance: float = 1e-6,
+    ) -> Dict[str, Any]:
+        """Compare ledger positions with broker/account positions."""
+        return self.execution_engine.reconcile_with_broker(
+            broker_positions=broker_positions,
+            quantity_tolerance=quantity_tolerance,
+            price_tolerance=price_tolerance,
+        )
+
+    def run_broker_reconciliation(self) -> Dict[str, Any]:
+        """Run broker reconciliation and disable trading on drift."""
+        report = self.reconcile_broker_positions(
+            quantity_tolerance=self.config.broker_reconciliation_quantity_tolerance,
+            price_tolerance=self.config.broker_reconciliation_price_tolerance,
+        )
+        report = dict(report)
+        report["timestamp"] = datetime.now().isoformat()
+        report["mode"] = self.config.mode.value
+        report["action"] = "none"
+
+        with self._lock:
+            self.last_broker_reconciliation = report
+            self._last_broker_reconciliation_at = time.monotonic()
+            if not report.get("in_sync", False):
+                self.state.circuit_breaker_active = True
+                self.state.is_trading_enabled = False
+                report["action"] = "trading_disabled_until_reconciled"
+                self.last_broker_reconciliation = report
+
+        if not report.get("in_sync", False):
+            logger.error("Broker reconciliation drift detected: %s", report["discrepancies"])
+        else:
+            self._reset_loop_error("broker_reconciliation")
+
+        return report
 
     def start(self):
         """Start the trading engine."""
@@ -859,12 +938,26 @@ class UnifiedTradingEngine:
                     if risk_status["circuit_breaker"]:
                         self.state.circuit_breaker_active = True
 
+                if self._broker_reconciliation_due():
+                    self.run_broker_reconciliation()
+
                 time.sleep(1)
                 self._reset_loop_error("position_monitor")
 
             except Exception as exc:
                 self._record_loop_error("position_monitor", exc)
                 time.sleep(5)
+
+    def _broker_reconciliation_due(self) -> bool:
+        """Return true when live broker reconciliation should run."""
+        if not self.config.enable_broker_reconciliation:
+            return False
+        if self.config.mode != SystemMode.LIVE:
+            return False
+        if self.state.circuit_breaker_active:
+            return False
+        interval = max(0.0, self.config.broker_reconciliation_interval_seconds)
+        return time.monotonic() - self._last_broker_reconciliation_at >= interval
 
     def _update_metrics(self, trade_record: Dict):
         """Update performance metrics."""
@@ -914,6 +1007,7 @@ class UnifiedTradingEngine:
                 "circuit_breaker": self.state.circuit_breaker_active,
                 "metrics": self.metrics,
                 "ledger": self.ledger.snapshot().to_dict(),
+                "broker_reconciliation": self.last_broker_reconciliation,
                 "last_update": self.state.last_update.isoformat()
             }
 

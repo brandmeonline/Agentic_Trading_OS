@@ -46,11 +46,14 @@ def main():
     port = int(os.environ.get('WEB_PORT', '5000'))
     debug = os.environ.get('WEB_DEBUG', '').lower() == 'true'
     password = os.environ.get('WEB_PASSWORD') or os.environ.get('ADMIN_PASSWORD')
+    default_hash_file = Path(__file__).parent / "config" / "dashboard_admin.hash"
+    password_hash_file = Path(os.environ.get('ADMIN_PASSWORD_HASH_FILE', default_hash_file))
     has_password_hash = bool(os.environ.get('ADMIN_PASSWORD_HASH'))
+    has_password_hash_file = password_hash_file.exists()
 
-    if not password and not has_password_hash:
+    if not password and not has_password_hash and not has_password_hash_file:
         print("Admin credentials are not configured.")
-        print("Set ADMIN_PASSWORD_HASH, or set ADMIN_PASSWORD/WEB_PASSWORD for local startup.")
+        print("Set ADMIN_PASSWORD_HASH, ADMIN_PASSWORD_HASH_FILE, or set ADMIN_PASSWORD/WEB_PASSWORD for local startup.")
         return 1
 
     if not debug and not (os.environ.get('WEB_SECRET_KEY') or os.environ.get('SECRET_KEY')):
@@ -66,7 +69,8 @@ def main():
         host=host,
         port=port,
         debug=debug,
-        admin_password=password
+        admin_password=password,
+        admin_password_hash_path=str(password_hash_file)
     )
     return 0
 

@@ -7,7 +7,8 @@ and real-time position tracking.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Callable, Any
 from enum import Enum
@@ -16,6 +17,8 @@ import time
 from collections import deque
 
 from core.ledger import TradingLedger
+
+logger = logging.getLogger(__name__)
 
 
 class OrderType(Enum):
@@ -145,6 +148,78 @@ class ExecutionResult:
     latency_ms: float = 0.0
 
 
+class AlpacaExecutionAdapter:
+    """Adapter that lets ExecutionEngine submit orders through AlpacaClient."""
+
+    def __init__(self, client: Any, default_time_in_force: str = "day"):
+        self.client = client
+        self.default_time_in_force = default_time_in_force
+        self._external_order_ids: Dict[str, str] = {}
+
+    def submit_order(self, order: Order) -> Dict[str, Any]:
+        """Place an execution order through Alpaca and normalize the response."""
+        alpaca_order = self.client.place_order(
+            symbol=order.asset,
+            qty=order.quantity,
+            side=order.side.value,
+            order_type=order.order_type.value,
+            time_in_force=self.default_time_in_force,
+            limit_price=order.price,
+            stop_price=order.stop_price,
+            client_order_id=order.id,
+        )
+        response = self._order_to_response(alpaca_order)
+        external_order_id = response.get("external_order_id")
+        if external_order_id:
+            self._external_order_ids[order.id] = external_order_id
+        return response
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel by external broker order id when known."""
+        external_order_id = self._external_order_ids.get(order_id, order_id)
+        return bool(self.client.cancel_order(external_order_id))
+
+    def get_positions(self) -> Any:
+        """Expose broker positions for ledger reconciliation."""
+        return self.client.get_positions()
+
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        """Fetch and normalize an Alpaca order."""
+        external_order_id = self._external_order_ids.get(order_id, order_id)
+        return self._order_to_response(self.client.get_order(external_order_id))
+
+    def _order_to_response(self, alpaca_order: Any) -> Dict[str, Any]:
+        """Normalize an Alpaca order dataclass/object for ExecutionEngine."""
+        data = self._to_dict(alpaca_order)
+        return {
+            "external_order_id": data.get("order_id") or data.get("id"),
+            "client_order_id": data.get("client_order_id"),
+            "symbol": data.get("symbol"),
+            "side": data.get("side"),
+            "type": data.get("order_type") or data.get("type"),
+            "status": data.get("status"),
+            "quantity": data.get("qty") or data.get("quantity"),
+            "filled_quantity": data.get("filled_qty", data.get("filled_quantity", 0.0)),
+            "average_price": data.get("filled_avg_price", data.get("average_price", 0.0)) or 0.0,
+            "filled_at": data.get("filled_at"),
+        }
+
+    def _to_dict(self, value: Any) -> Dict[str, Any]:
+        """Convert Alpaca dataclasses or objects to dictionaries."""
+        if isinstance(value, dict):
+            return value
+        if is_dataclass(value):
+            return asdict(value)
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            return dict(to_dict())
+        return {
+            key: item
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+
+
 class ExecutionEngine:
     """
     Sophisticated trade execution engine.
@@ -161,9 +236,11 @@ class ExecutionEngine:
         self,
         config: Optional[ExecutionConfig] = None,
         ledger: Optional[TradingLedger] = None,
+        broker_adapter: Optional[Any] = None,
     ):
         self.config = config or ExecutionConfig()
         self.ledger = ledger
+        self.broker_adapter = broker_adapter
 
         # Order management
         self.orders: Dict[str, Order] = {}
@@ -303,15 +380,172 @@ class ExecutionEngine:
         if self.config.simulation_mode:
             return self._simulate_fill(order)
 
-        # Real execution would go here
+        if self.broker_adapter:
+            return self._execute_live(order)
+
         order.status = OrderStatus.REJECTED
         self.rejected_orders += 1
         self._mark_ledger_status(order)
         return ExecutionResult(
             success=False,
             order=order,
-            message="Real execution not implemented"
+            message="Live execution adapter is not configured"
         )
+
+    def _execute_live(self, order: Order) -> ExecutionResult:
+        """Submit an order to a live broker adapter and mirror accepted fills."""
+        submit = getattr(self.broker_adapter, "submit_order", None)
+        if not callable(submit):
+            order.status = OrderStatus.REJECTED
+            self.rejected_orders += 1
+            self._mark_ledger_status(order)
+            return ExecutionResult(
+                success=False,
+                order=order,
+                message="Live execution adapter does not implement submit_order"
+            )
+
+        try:
+            response = submit(order)
+        except Exception as exc:
+            logger.exception("Live execution adapter failed while submitting order %s", order.id)
+            order.status = OrderStatus.REJECTED
+            self.rejected_orders += 1
+            self._mark_ledger_status(order)
+            return ExecutionResult(
+                success=False,
+                order=order,
+                message="Live execution adapter failed"
+            )
+
+        return self._apply_live_execution_response(order, response)
+
+    def _apply_live_execution_response(self, order: Order, response: Any) -> ExecutionResult:
+        """Normalize a broker response into local order and ledger state."""
+        data = self._normalize_adapter_payload(response)
+        order.status = self._coerce_order_status(data.get("status", OrderStatus.SUBMITTED.value))
+        order.submitted_at = order.submitted_at or datetime.now()
+
+        filled_quantity = self._coerce_float(
+            data.get("filled_quantity", data.get("filled_qty", data.get("executed_quantity", 0.0)))
+        )
+        avg_price = self._coerce_float(
+            data.get("avg_fill_price", data.get("average_price", data.get("filled_price", 0.0)))
+        )
+
+        if filled_quantity > 0:
+            order.filled_quantity = min(filled_quantity, order.quantity)
+            order.filled_price = avg_price
+            order.filled_at = self._parse_timestamp(data.get("filled_at")) or datetime.now()
+
+            fills = data.get("fills") or []
+            normalized_fills = [
+                self._normalize_adapter_payload(fill)
+                for fill in fills
+            ]
+            if not normalized_fills and avg_price > 0:
+                normalized_fills = [{
+                    "quantity": order.filled_quantity,
+                    "price": avg_price,
+                    "timestamp": order.filled_at.isoformat(),
+                }]
+
+            order.fills = [
+                {
+                    "quantity": self._coerce_float(fill.get("quantity", fill.get("qty", 0.0))),
+                    "price": self._coerce_float(fill.get("price", fill.get("fill_price", avg_price))),
+                    "timestamp": fill.get("timestamp", order.filled_at.isoformat()),
+                }
+                for fill in normalized_fills
+                if self._coerce_float(fill.get("quantity", fill.get("qty", 0.0))) > 0
+            ]
+            if order.status == OrderStatus.SUBMITTED:
+                order.status = (
+                    OrderStatus.FILLED
+                    if order.filled_quantity >= order.quantity
+                    else OrderStatus.PARTIAL
+                )
+            self._update_position(order)
+            self._record_ledger_fill(order)
+            self.filled_orders += 1 if order.status == OrderStatus.FILLED else 0
+            self.total_volume += order.filled_quantity
+            if self.on_fill:
+                for fill in order.fills:
+                    self.on_fill(order, fill)
+        else:
+            self._mark_ledger_status(order)
+
+        if order.status == OrderStatus.REJECTED:
+            self.rejected_orders += 1
+
+        success = order.status in {
+            OrderStatus.SUBMITTED,
+            OrderStatus.PARTIAL,
+            OrderStatus.FILLED,
+        }
+        return ExecutionResult(
+            success=success,
+            order=order,
+            message="Live order accepted" if success else "Live order rejected",
+        )
+
+    def _normalize_adapter_payload(self, payload: Any) -> Dict[str, Any]:
+        """Convert adapter responses to a plain dictionary."""
+        if payload is None:
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        if is_dataclass(payload):
+            return asdict(payload)
+        to_dict = getattr(payload, "to_dict", None)
+        if callable(to_dict):
+            return dict(to_dict())
+        return {
+            key: value
+            for key, value in vars(payload).items()
+            if not key.startswith("_")
+        }
+
+    def _coerce_order_status(self, raw_status: Any) -> OrderStatus:
+        """Map broker status spellings onto execution order statuses."""
+        if isinstance(raw_status, OrderStatus):
+            return raw_status
+        if isinstance(raw_status, Enum):
+            raw_status = raw_status.value
+
+        normalized = str(raw_status or "").lower()
+        aliases = {
+            "accepted": OrderStatus.SUBMITTED,
+            "new": OrderStatus.SUBMITTED,
+            "open": OrderStatus.SUBMITTED,
+            "submitted": OrderStatus.SUBMITTED,
+            "partially_filled": OrderStatus.PARTIAL,
+            "partial": OrderStatus.PARTIAL,
+            "filled": OrderStatus.FILLED,
+            "done": OrderStatus.FILLED,
+            "cancelled": OrderStatus.CANCELLED,
+            "canceled": OrderStatus.CANCELLED,
+            "rejected": OrderStatus.REJECTED,
+            "expired": OrderStatus.EXPIRED,
+        }
+        return aliases.get(normalized, OrderStatus.SUBMITTED)
+
+    def _coerce_float(self, value: Any) -> float:
+        """Convert broker numeric fields to floats."""
+        if value in (None, ""):
+            return 0.0
+        return float(value)
+
+    def _parse_timestamp(self, value: Any) -> Optional[datetime]:
+        """Parse broker timestamp fields when provided."""
+        if isinstance(value, datetime):
+            return value
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
 
     def _execute_twap(self, order: Order) -> ExecutionResult:
         """Execute using Time-Weighted Average Price algorithm."""
@@ -502,13 +736,16 @@ class ExecutionEngine:
         return base_price
 
     def _update_position(self, order: Order) -> None:
-        """Update position after fill."""
+        """Update legacy position cache after fill."""
         current_pos = self.positions.get(order.asset, 0)
 
         if order.side == OrderSide.BUY:
             self.positions[order.asset] = current_pos + order.filled_quantity
         else:
             self.positions[order.asset] = current_pos - order.filled_quantity
+
+        if self.positions.get(order.asset) == 0:
+            self.positions.pop(order.asset, None)
 
     def _record_ledger_fill(self, order: Order) -> None:
         """Record order fills in the canonical ledger."""
@@ -538,16 +775,37 @@ class ExecutionEngine:
             price=fill_price,
             timestamp=order.filled_at or datetime.now(),
         )
+        self._sync_positions_from_ledger()
 
     def _mark_ledger_status(self, order: Order) -> None:
         """Mirror order status to the canonical ledger."""
         if self.ledger:
             self.ledger.mark_order_status(order.id, order.status.value)
 
+    def _sync_positions_from_ledger(self) -> None:
+        """Keep the legacy position cache aligned with the canonical ledger."""
+        if not self.ledger:
+            return
+        self.positions = {
+            symbol: record.quantity
+            for symbol, record in self.ledger.positions.items()
+            if record.quantity != 0
+        }
+
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order."""
         order = self.orders.get(order_id)
         if order and order.is_active:
+            if not self.config.simulation_mode and self.broker_adapter:
+                cancel = getattr(self.broker_adapter, "cancel_order", None)
+                if not callable(cancel):
+                    return False
+                try:
+                    if not cancel(order_id):
+                        return False
+                except Exception:
+                    logger.exception("Live execution adapter failed while cancelling order %s", order_id)
+                    return False
             order.status = OrderStatus.CANCELLED
             self._mark_ledger_status(order)
             return True
@@ -566,15 +824,46 @@ class ExecutionEngine:
 
     def get_position(self, asset: str) -> float:
         """Get current position for an asset."""
+        if self.ledger:
+            position = self.ledger.positions.get(asset)
+            return position.quantity if position else 0.0
         return self.positions.get(asset, 0)
 
     def get_all_positions(self) -> Dict[str, float]:
         """Get all positions."""
+        if self.ledger:
+            return {
+                symbol: position.quantity
+                for symbol, position in self.ledger.positions.items()
+                if position.quantity != 0
+            }
         return dict(self.positions)
+
+    def reconcile_with_broker(
+        self,
+        broker_positions: Optional[Any] = None,
+        quantity_tolerance: float = 1e-8,
+        price_tolerance: float = 1e-6,
+    ) -> Dict[str, Any]:
+        """Compare canonical ledger positions with broker/account positions."""
+        if not self.ledger:
+            raise RuntimeError("Cannot reconcile positions without a canonical ledger")
+
+        if broker_positions is None:
+            get_positions = getattr(self.broker_adapter, "get_positions", None)
+            if not callable(get_positions):
+                raise RuntimeError("Broker adapter does not implement get_positions")
+            broker_positions = get_positions()
+
+        return self.ledger.reconcile_positions(
+            broker_positions,
+            quantity_tolerance=quantity_tolerance,
+            price_tolerance=price_tolerance,
+        )
 
     def close_position(self, asset: str, price: Optional[float] = None) -> Optional[ExecutionResult]:
         """Close entire position for an asset."""
-        position = self.positions.get(asset, 0)
+        position = self.get_position(asset)
         if position == 0:
             return None
 
@@ -607,7 +896,7 @@ class ExecutionEngine:
             "avg_slippage": f"{avg_slippage:.4%}",
             "total_volume": round(self.total_volume, 2),
             "active_orders": len(self.get_active_orders()),
-            "open_positions": len([p for p in self.positions.values() if p != 0]),
+            "open_positions": len([p for p in self.get_all_positions().values() if p != 0]),
         }
 
     def check_expired_orders(self) -> List[Order]:

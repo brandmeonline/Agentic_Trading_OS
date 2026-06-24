@@ -1,8 +1,8 @@
 # Agentic Trading OS - Comprehensive Readiness Assessment
 
-**Assessment Date:** January 2026
-**Version:** 2.0 (Post-Remediation)
-**Status:** Production Ready
+**Assessment Date:** June 23, 2026
+**Version:** 2.2 (Codex hardening update)
+**Status:** Hardening in progress; not production ready
 
 ---
 
@@ -15,7 +15,44 @@ This document provides a comprehensive analysis of the Agentic Trading OS platfo
 - API connectivity validation
 - Overall production readiness
 
-**Overall Readiness Score: 94/100** (Up from 73/100 pre-remediation)
+**Current Codex Audit Score: 9.0/10** (up from 8.9/10 after adding automated live broker reconciliation with circuit-breaker enforcement and regression coverage)
+
+This score supersedes the earlier `94/100` and `90/100` readiness claims in this document. The platform has improved materially after dashboard authentication hardening, CSRF enforcement, credential fail-closed behavior, production startup guardrails, side-effect-free risk sizing, durable local admin hash rotation, position-state reset fixes, restart-safe settings persistence, ledger-backed execution position reads, optional JSON/SQLite ledger storage, automated broker-position reconciliation, explicit REST simulation/live mode handling, live execution adapter dispatch, a concrete Alpaca execution adapter, controlled dashboard worker shutdown, generic API error responses, and CI regression coverage. It is still not ready for fully unattended production trading until broker smoke and deployment gates run in the target environment.
+
+Primary remaining blockers:
+- Execution now has a live adapter boundary, a concrete Alpaca adapter, and automated broker-position reconciliation, but production promotion still needs the credential-backed paper smoke gate to pass in CI or a gated deployment environment.
+- Several assistant and market-data surfaces still use mocked or synthetic data paths.
+- Some non-critical assistant, marketplace, analytics, and DeFi routes still catch broad exceptions and should move to typed operational errors.
+- Admin password changes can persist to a local hash file, but production secret rotation still needs managed secret storage.
+- CI is configured for the explicit regression suite, but deployment, live-adapter, and end-to-end browser gates are still missing.
+
+Latest verified improvements:
+- Admin password updates now verify the current password, update the active runtime hash, and rotate the CSRF token.
+- Admin password updates can persist a hash file and survive app restart when file-backed auth is configured.
+- Account reset and clear-all flows preserve `positions` as a mapping instead of corrupting it into a list.
+- Position CSV export now iterates position records correctly.
+- Dashboard settings now load from and persist to a configured file path with unknown persisted keys ignored.
+- Clear-all now persists default settings back to disk.
+- Execution position reads, close sizing, and execution statistics now use the canonical ledger when attached.
+- Trading ledger can persist orders, fills, cash, and positions to disk and fail closed on corrupt persisted state.
+- Trading ledger can use an optional SQLite backend for transactional local persistence and rejects competing persistence backends.
+- Unified trading engine can restore persisted ledger cash/positions on startup.
+- Unified trading engine can restore persisted ledger cash/positions from SQLite on startup.
+- Live execution can submit through a configured broker adapter and record accepted fills into the canonical ledger.
+- Alpaca execution adapter maps local order IDs to broker order IDs and exposes broker positions for reconciliation.
+- Ledger rejects overfills and mismatched fill symbol/side updates.
+- Ledger can reconcile its position projection against broker/account snapshots without mutating state.
+- Execution and unified engine paths can run broker-position reconciliation against the canonical ledger.
+- Live monitor now runs broker reconciliation automatically and disables trading through the circuit breaker when broker/ledger drift is detected.
+- Dashboard price/sync workers now have an explicit stop event and joinable shutdown path.
+- Alpaca credentials and order-placement failures no longer return raw exception text to the browser.
+- REST account/order endpoints explicitly mark simulation responses and fail closed in live mode without a trading adapter.
+- REST live-mode account, order, and market-data endpoints now dispatch to configured adapter methods instead of returning synthetic data.
+- REST and sensitive dashboard settings paths now return generic internal errors instead of raw exception text.
+- Advanced-module tests no longer rely on pytest return-value warnings to hide failures.
+- GitHub Actions workflow added for compile, explicit regression tests, and optional Alpaca paper smoke when secrets are configured.
+- Explicit regression suite: 121 passing tests with no warnings.
+- Optional Alpaca paper smoke: skipped locally when `ALPACA_API_KEY` / `ALPACA_API_SECRET` are absent.
 
 ---
 
@@ -286,14 +323,14 @@ Templates (12 total):
 
 | Component | Weight | Score | Weighted |
 |-----------|--------|-------|----------|
-| Feature Completeness | 30% | 92/100 | 27.6 |
-| Code Quality | 20% | 85/100 | 17.0 |
-| UI/UX | 20% | 95/100 | 19.0 |
-| Performance | 15% | 90/100 | 13.5 |
-| Security | 15% | 85/100 | 12.75 |
-| **TOTAL** | **100%** | - | **89.85** |
+| Feature Completeness | 30% | 91/100 | 27.3 |
+| Code Quality | 20% | 91/100 | 18.2 |
+| UI/UX | 20% | 85/100 | 17.0 |
+| Performance | 15% | 89/100 | 13.35 |
+| Security | 15% | 92/100 | 13.8 |
+| **TOTAL** | **100%** | - | **89.65** |
 
-**FINAL SCORE: 90/100 - PRODUCTION READY**
+**CURRENT CODEX AUDIT SCORE: 90/100 - RELEASE-CANDIDATE HARDENING; EXTERNAL BROKER/DEPLOYMENT GATES STILL REQUIRED**
 
 ---
 
@@ -324,22 +361,32 @@ Templates (12 total):
 
 ## 9. CONCLUSION
 
-The Agentic Trading OS platform has achieved **production readiness** with a comprehensive feature set that exceeds most competitors. The remediation of all 4 critical connectivity gaps ensures a seamless user experience from frontend to backend.
+The Agentic Trading OS platform has a broad feature surface and now has stronger dashboard security, durable local configuration, REST mode boundaries, live execution adapter dispatch, a concrete Alpaca execution adapter, automated broker reconciliation with circuit-breaker enforcement, CI coverage, controlled dashboard worker shutdown, transactional local ledger persistence, and state-integrity guardrails. The current audited score is **9.0/10**, with external broker smoke and deployment gates still required before fully unattended production trading.
 
 **Key Strengths:**
-- Industry-leading AI/ML integration
-- Future-proof blockchain/DeFi architecture
-- Self-hosted privacy-first design
-- Open source flexibility
+- Self-hosted privacy-first direction
+- Broad AI/ML, analytics, and DeFi feature surface
+- Improved dashboard authentication, CSRF protection, startup guardrails, settings persistence, and durable local password hash rotation
+- Ledger-backed execution reads reduce position-state drift in the execution path
+- JSON and SQLite-backed ledger persistence plus broker-position reconciliation reports improve restart and drift-detection readiness
+- Live execution and REST live endpoints now use configured adapter methods instead of silent mock fallbacks
+- Alpaca execution can be routed through the canonical execution engine and ledger without network-dependent tests
+- Execution/unified engine reconciliation can compare broker positions with canonical ledger state
+- Live broker reconciliation now runs automatically and disables trading on broker/ledger drift
+- Dashboard background workers can be stopped and joined deterministically
+- Sensitive credential/order errors are logged server-side without leaking exception text to clients
+- Explicit REST simulation/live boundaries reduce mock/live ambiguity
+- Warning-free regression coverage and a CI workflow cover the highest-risk web, REST, execution, and risk paths
 
-**Areas for Continued Investment:**
-- Test automation and CI/CD
-- Mobile experience
-- Community building
-
-The platform is ready for initial users with a clear roadmap for continued enhancement.
+**Areas Required Before Production:**
+- Run the credential-backed Alpaca paper smoke gate in CI or a gated deployment environment
+- Exercise automated ledger reconciliation against credential-backed broker state and add operator-approved repair workflows
+- Replace remaining assistant and market-data mock surfaces with explicit simulation/live boundaries
+- Replace remaining broad exception swallowing with typed errors and observable logs
+- Add managed production secret-rotation workflows
+- Add deployment, live-adapter, and end-to-end browser CI gates
 
 ---
 
-*Document generated as part of the Agentic Trading OS readiness assessment.*
-*Next review scheduled: Q2 2026*
+*Document updated as part of the Agentic Trading OS Codex readiness assessment.*
+*Next review scheduled after execution/ledger consolidation.*
