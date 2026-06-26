@@ -376,6 +376,14 @@ class SentimentAnalyzer:
         self.embeddings = WordEmbeddings(config.embedding_dim, config.vocab_size)
         self.attention = SelfAttention(config.embedding_dim)
 
+        # Fixed projection used to map pooled embeddings to a sentiment score.
+        # Built once with a local RNG so it is deterministic across runs without
+        # mutating the global NumPy random state on every sentiment calculation.
+        projection_rng = np.random.default_rng(42)
+        self.sentiment_projection = (
+            projection_rng.standard_normal(config.embedding_dim) * 0.1
+        )
+
         # Sentiment lexicon weights
         self.lexicon_weights: Dict[str, float] = {}
         self._build_lexicon()
@@ -515,12 +523,9 @@ class SentimentAnalyzer:
         else:
             pooled = np.zeros(self.config.embedding_dim)
 
-        # Project to sentiment score
-        # Use a learned projection (initialized randomly for now)
-        np.random.seed(42)  # Deterministic for consistency
-        sentiment_projection = np.random.randn(self.config.embedding_dim) * 0.1
-
-        raw_score = np.dot(pooled, sentiment_projection)
+        # Project to sentiment score using the fixed projection built in
+        # __init__ (deterministic, no global RNG side effects per call).
+        raw_score = np.dot(pooled, self.sentiment_projection)
         normalized_score = np.tanh(raw_score)
 
         # Confidence based on embedding norm
