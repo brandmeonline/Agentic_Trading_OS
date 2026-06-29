@@ -2,13 +2,19 @@
 import openai
 
 def query_macro_context(prompt):
-    # Placeholder using OpenAI - will be integrated with a macro source + vector DB
+    # Placeholder using OpenAI - will be integrated with a macro source + vector DB.
+    # When that RAG/vector-DB path lands, the retrieved chunks are the high-volume
+    # surface where Headroom compression pays off; the opt-in adapter is already wired.
+    messages = [
+        {"role": "system", "content": "You are a financial macro analyst."},
+        {"role": "user", "content": prompt}
+    ]
+    # Opt-in, default-off context compression (identity unless ALPHAIO_HEADROOM=1).
+    from utils.headroom_compress import compress_messages
+    messages = compress_messages(messages, surface="rag_macro")
     response = openai.ChatCompletion.create(
         model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a financial macro analyst."},
-            {"role": "user", "content": prompt}
-        ]
+        messages=messages
     )
     return response["choices"][0]["message"]["content"]
 
