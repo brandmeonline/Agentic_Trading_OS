@@ -69,7 +69,8 @@ def main() -> int:
     tb = ta = 0
     for name, msgs in SURFACES.items():
         res = compress(msgs, model="gpt-4", model_limit=128000, config=aggressive)
-        tb += res.tokens_before; ta += res.tokens_after
+        tb += res.tokens_before
+        ta += res.tokens_after
         verdicts = [_verdict(a["content"], b["content"]) for a, b in zip(msgs, res.messages)]
         print(f"  {name:16s} {res.tokens_before:4d}->{res.tokens_after:4d} "
               f"({res.compression_ratio*100:4.1f}%)  {verdicts}")

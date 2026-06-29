@@ -59,7 +59,7 @@ def _record(surface: str, before: int, after: int, transforms: Any) -> None:
                 "transforms": list(transforms) if transforms else [],
             }) + "\n")
     except Exception:  # noqa: BLE001 - measurement must never affect trading
-        pass
+        return  # swallow: a logging fault must never disturb a trading call
 
 
 def compress_messages(messages: Messages, *, surface: str,

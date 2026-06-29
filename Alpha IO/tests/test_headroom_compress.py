@@ -5,7 +5,6 @@ identity function, so no LLM call path can change behaviour or outputs.
 """
 
 import builtins
-import json
 import os
 import sys
 import unittest
