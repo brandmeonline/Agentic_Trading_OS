@@ -1,0 +1,10 @@
+# Optional: Headroom context-compression layer (github.com/chopratejas/headroom).
+#
+# NOT required to run Alpha IO. utils.headroom_compress lazily imports this and
+# degrades to a no-op passthrough when absent, so trading paths are unaffected.
+# Compression is also OFF unless an operator sets ALPHAIO_HEADROOM=1.
+#
+# Install with Python 3.13 (NOT 3.14+) so LiteLLM dollar reporting works:
+#   pip install "headroom-ai[all]"
+# For the lightweight structural compressors only: pip install headroom-ai
+headroom-ai>=0.27,<1.0

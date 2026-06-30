@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}Advanced Analytics - Agentic Trading OS{% endblock %}
+{% block page_title %}Advanced Analytics{% endblock %}
+
+{% block content %}
+<div class="analytics-page advanced-analytics">
+    <div class="card">
+        <div class="card-header">
+            <h2>Quantitative Toolkit</h2>
+            <a href="{{ url_for('analytics') }}" class="btn btn-sm">&#8592; Back to Analytics</a>
+        </div>
+        <div class="card-body">
+            <p class="stat-subtext">
+                Monte Carlo projections, mean-variance optimization, stress scenarios and
+                risk metrics. All computed server-side via the advanced analytics engine.
+            </p>
+        </div>
+    </div>
+
+    <div class="analytics-grid">
+        <!-- Monte Carlo -->
+        <div class="card">
+            <div class="card-header"><h2>Monte Carlo Simulation</h2></div>
+            <div class="card-body">
+                <div class="form-row">
+                    <label>Initial Value
+                        <input type="number" id="mc-initial" value="100000" step="1000">
+                    </label>
+                    <label>Expected Return
+                        <input type="number" id="mc-return" value="0.08" step="0.01">
+                    </label>
+                    <label>Volatility
+                        <input type="number" id="mc-vol" value="0.15" step="0.01">
+                    </label>
+                    <label>Horizon (days)
+                        <input type="number" id="mc-horizon" value="252" step="1">
+                    </label>
+                </div>
+                <button class="btn btn-primary" id="run-mc">Run Simulation</button>
+                <div id="mc-result" class="result-grid"></div>
+            </div>
+        </div>
+
+        <!-- Portfolio Optimization -->
+        <div class="card">
+            <div class="card-header"><h2>Portfolio Optimization</h2></div>
+            <div class="card-body">
+                <div class="form-row">
+                    <label>Assets (comma separated)
+                        <input type="text" id="opt-assets" value="AAPL,SPY,BTC">
+                    </label>
+                    <label>Max Weight
+                        <input type="number" id="opt-maxweight" value="0.4" step="0.05">
+                    </label>
+                </div>
+                <button class="btn btn-primary" id="run-opt">Optimize</button>
+                <div id="opt-result" class="result-grid"></div>
+            </div>
+        </div>
+
+        <!-- Scenario Analysis -->
+        <div class="card">
+            <div class="card-header"><h2>Stress Scenarios</h2></div>
+            <div class="card-body">
+                <button class="btn btn-primary" id="run-scenarios">Run Scenarios</button>
+                <div id="scenario-result" class="result-list"></div>
+            </div>
+        </div>
+
+        <!-- Risk Metrics -->
+        <div class="card">
+            <div class="card-header"><h2>Risk Metrics</h2></div>
+            <div class="card-body">
+                <button class="btn btn-primary" id="run-risk">Calculate Risk</button>
+                <div id="risk-result" class="result-grid"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function fmtPct(v) { return (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'; }
+    function fmtUsd(v) { return '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
+
+    function cell(label, value, cls) {
+        return `<div class="stat-card"><div class="stat-info">
+            <span class="stat-label">${label}</span>
+            <span class="stat-value ${cls || ''}">${value}</span>
+        </div></div>`;
+    }
+
+    function postJson(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {})
+        }).then(r => r.json());
+    }
+
+    document.getElementById('run-mc').addEventListener('click', function () {
+        const out = document.getElementById('mc-result');
+        out.innerHTML = '<p class="stat-subtext">Running...</p>';
+        postJson('/api/analytics/monte-carlo', {
+            initial_value: parseFloat(document.getElementById('mc-initial').value),
+            expected_return: parseFloat(document.getElementById('mc-return').value),
+            volatility: parseFloat(document.getElementById('mc-vol').value),
+            time_horizon: parseInt(document.getElementById('mc-horizon').value, 10)
+        }).then(d => {
+            if (!d.success) { out.innerHTML = `<p class="negative">${d.error || 'Failed'}</p>`; return; }
+            const r = d.result;
+            out.innerHTML =
+                cell('Mean Final', fmtUsd(r.mean_final_value)) +
+                cell('Median Final', fmtUsd(r.median_final_value)) +
+                cell('5th %ile', fmtUsd(r.percentile_5), 'negative') +
+                cell('95th %ile', fmtUsd(r.percentile_95), 'positive') +
+                cell('Prob. Profit', (r.prob_profit * 100).toFixed(1) + '%') +
+                cell('Prob. -20%', (r.prob_loss_20pct * 100).toFixed(1) + '%', 'negative');
+        }).catch(() => { out.innerHTML = '<p class="negative">Request failed</p>'; });
+    });
+
+    document.getElementById('run-opt').addEventListener('click', function () {
+        const out = document.getElementById('opt-result');
+        out.innerHTML = '<p class="stat-subtext">Optimizing...</p>';
+        const assets = document.getElementById('opt-assets').value.split(',').map(s => s.trim()).filter(Boolean);
+        postJson('/api/analytics/optimize', {
+            assets: assets,
+            max_weight: parseFloat(document.getElementById('opt-maxweight').value)
+        }).then(d => {
+            if (!d.success) { out.innerHTML = `<p class="negative">${d.error || 'Failed'}</p>`; return; }
+            const o = d.optimization;
+            let html = '';
+            Object.keys(o.weights).forEach(k => { html += cell(k, o.weights[k] + '%'); });
+            html += cell('Exp. Return', fmtPct(o.expected_return * 100), 'positive');
+            html += cell('Volatility', (o.volatility * 100).toFixed(2) + '%');
+            html += cell('Sharpe', Number(o.sharpe_ratio).toFixed(2));
+            out.innerHTML = html;
+        }).catch(() => { out.innerHTML = '<p class="negative">Request failed</p>'; });
+    });
+
+    document.getElementById('run-scenarios').addEventListener('click', function () {
+        const out = document.getElementById('scenario-result');
+        out.innerHTML = '<p class="stat-subtext">Running...</p>';
+        postJson('/api/analytics/scenarios', {}).then(d => {
+            if (!d.success) { out.innerHTML = `<p class="negative">${d.error || 'Failed'}</p>`; return; }
+            out.innerHTML = d.scenarios.map(s => `
+                <div class="wl-item">
+                    <span class="wl-label">${s.name}</span>
+                    <span class="wl-value ${s.impact_pct >= 0 ? 'positive' : 'negative'}">${fmtPct(s.impact_pct)}</span>
+                </div>`).join('');
+        }).catch(() => { out.innerHTML = '<p class="negative">Request failed</p>'; });
+    });
+
+    document.getElementById('run-risk').addEventListener('click', function () {
+        const out = document.getElementById('risk-result');
+        out.innerHTML = '<p class="stat-subtext">Calculating...</p>';
+        postJson('/api/analytics/risk', {}).then(d => {
+            if (!d.success) { out.innerHTML = `<p class="negative">${d.error || 'Failed'}</p>`; return; }
+            const m = d.risk_metrics;
+            out.innerHTML =
+                cell('VaR 95%', m.var_95 + '%', 'negative') +
+                cell('CVaR 95%', m.cvar_95 + '%', 'negative') +
+                cell('Sortino', m.sortino_ratio) +
+                cell('Daily Vol', m.daily_volatility + '%') +
+                cell('Annual Vol', m.annualized_volatility + '%');
+        }).catch(() => { out.innerHTML = '<p class="negative">Request failed</p>'; });
+    });
+</script>
+{% endblock %}

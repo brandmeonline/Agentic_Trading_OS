@@ -792,7 +792,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     @login_required
     def settings():
         """Settings page."""
-        return render_template("settings.html")
+        return render_template("settings.html", stats=trading_state.get_stats())
 
     # ==========================================================================
     # Routes - API

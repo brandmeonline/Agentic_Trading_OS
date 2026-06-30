@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}{{ strategy.name }} - Strategy - Agentic Trading OS{% endblock %}
+{% block page_title %}Strategy Detail{% endblock %}
+
+{% block content %}
+<div class="strategy-detail" data-strategy-id="{{ strategy.id }}" data-author-id="{{ strategy.author_id }}">
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <h2>{{ strategy.name }}</h2>
+                <span class="stat-subtext">by {{ strategy.author_name or 'Unknown' }} &middot; {{ strategy.category.value }}</span>
+            </div>
+            <a href="{{ url_for('marketplace') }}" class="btn btn-sm">&#8592; Back to Marketplace</a>
+        </div>
+        <div class="card-body">
+            <p>{{ strategy.description or 'No description provided.' }}</p>
+            <div class="tag-row">
+                {% for tag in strategy.tags %}<span class="badge">{{ tag }}</span>{% endfor %}
+            </div>
+            <div class="tag-row">
+                {% for sym in strategy.symbols %}<span class="badge symbol">{{ sym }}</span>{% endfor %}
+            </div>
+            <div class="strategy-actions">
+                <button class="btn btn-primary" id="btn-follow">Follow</button>
+                <button class="btn" id="btn-like">&#9829; Like (<span id="like-count">{{ strategy.likes }}</span>)</button>
+                <button class="btn" id="btn-copy">Copy Trade</button>
+                <span class="price-tag">{% if strategy.price and strategy.price > 0 %}${{ "%.2f"|format(strategy.price) }}{% else %}Free{% endif %}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Total Return</span>
+                <span class="stat-value large {% if strategy.performance.total_return >= 0 %}positive{% else %}negative{% endif %}">
+                    {% if strategy.performance.total_return >= 0 %}+{% endif %}{{ "%.1f"|format(strategy.performance.total_return) }}%
+                </span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value large">{{ "%.0f"|format(strategy.performance.win_rate) }}%</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Sharpe Ratio</span>
+                <span class="stat-value large">{{ "%.2f"|format(strategy.performance.sharpe_ratio) }}</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Max Drawdown</span>
+                <span class="stat-value large negative">{{ "%.1f"|format(strategy.performance.max_drawdown) }}%</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Total Trades</span>
+                <span class="stat-value large">{{ strategy.performance.total_trades }}</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Followers</span>
+                <span class="stat-value large" id="follower-count">{{ strategy.followers }}</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Copiers</span>
+                <span class="stat-value large">{{ strategy.copiers }}</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <span class="stat-label">Rating</span>
+                <span class="stat-value large">{{ "%.1f"|format(strategy.rating) }} ({{ strategy.rating_count }})</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const root = document.querySelector('.strategy-detail');
+    const strategyId = root.dataset.strategyId;
+    const authorId = root.dataset.authorId;
+
+    function post(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {})
+        }).then(r => r.json());
+    }
+
+    document.getElementById('btn-follow').addEventListener('click', function () {
+        post(`/api/marketplace/strategies/${strategyId}/follow`).then(d => {
+            if (d.success) {
+                const el = document.getElementById('follower-count');
+                el.textContent = (parseInt(el.textContent, 10) || 0) + 1;
+                showNotification('success', 'Following strategy');
+            } else {
+                showNotification('error', d.error || 'Could not follow');
+            }
+        });
+    });
+
+    document.getElementById('btn-like').addEventListener('click', function () {
+        post(`/api/marketplace/strategies/${strategyId}/like`).then(d => {
+            if (d.success) {
+                const el = document.getElementById('like-count');
+                el.textContent = (parseInt(el.textContent, 10) || 0) + 1;
+            } else {
+                showNotification('error', d.error || 'Could not like');
+            }
+        });
+    });
+
+    document.getElementById('btn-copy').addEventListener('click', function () {
+        post('/api/copy-trading/setup', { leader_id: authorId, strategy_id: strategyId }).then(d => {
+            if (d.success) {
+                showNotification('success', 'Copy trading enabled');
+            } else {
+                showNotification('error', d.error || 'Could not set up copy trading');
+            }
+        });
+    });
+</script>
+{% endblock %}

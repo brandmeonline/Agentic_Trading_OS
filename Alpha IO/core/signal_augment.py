@@ -35,12 +35,17 @@ class SignalAugmentor:
                 "\n".join(examples[:5]) +
                 "\n\nNew signals:"
             )
+            messages = [
+                {"role": "system", "content": "You are a trading signal generator."},
+                {"role": "user", "content": prompt}
+            ]
+            # Opt-in, default-off context compression (utils.headroom_compress).
+            # Identity unless ALPHAIO_HEADROOM=1, so prompts are unchanged by default.
+            from utils.headroom_compress import compress_messages
+            messages = compress_messages(messages, surface="signal_augment")
             response = openai.ChatCompletion.create(
                 model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a trading signal generator."},
-                    {"role": "user", "content": prompt}
-                ]
+                messages=messages
             )
             synthetic_signals.append({
                 "cluster": label,
