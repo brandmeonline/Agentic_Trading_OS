@@ -16,8 +16,21 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.asymmetry_index import AsymmetryIndex, MeasuredAsymmetry
-from core.news_feed import NewsCorpus, NewsItem, SourceCategory, content_id, extract_tickers
+from core.asymmetry_index import (
+    NOVELTY_MODELS,
+    AsymmetryIndex,
+    HyperbolicNovelty,
+    LogNovelty,
+    MeasuredAsymmetry,
+)
+from core.news_feed import (
+    NewsCorpus,
+    NewsItem,
+    SourceCategory,
+    _lexicon_polarity,
+    content_id,
+    extract_tickers,
+)
 from core.score_signals import MalformedTickerField, parse_tickers
 from core.signal_router import SignalRouter
 
@@ -164,6 +177,106 @@ class TestSafeTickerParsing(unittest.TestCase):
         with self.assertRaises(MalformedTickerField):
             parse_tickers("{'a': 1}")
 
+
+
+class TestNoveltyModels(unittest.TestCase):
+    """Phase 2.1: the score shape is configurable; the default is unchanged."""
+
+    def test_default_is_the_original_shape(self):
+        index = AsymmetryIndex()
+        self.assertIsInstance(index.novelty_model, HyperbolicNovelty)
+        self.assertEqual(index.novelty_model.half_life, 1.0)
+        for n in (0, 1, 2, 5, 10):
+            self.assertAlmostEqual(index.novelty_model(n), 1.0 / (n + 1))
+
+    def test_hyperbolic_half_life_is_where_novelty_halves(self):
+        model = HyperbolicNovelty(half_life=8.0)
+        self.assertAlmostEqual(model(8), 0.5)
+
+    def test_log_decays_more_slowly_than_hyperbolic(self):
+        hyperbolic, log = HyperbolicNovelty(), LogNovelty()
+        for n in (2, 5, 10, 25):
+            self.assertGreater(log(n), hyperbolic(n))
+
+    def test_models_validate_their_parameters(self):
+        with self.assertRaises(ValueError):
+            HyperbolicNovelty(half_life=0)
+        with self.assertRaises(ValueError):
+            LogNovelty(scale=0)
+
+    def test_negative_counts_are_treated_as_zero(self):
+        self.assertEqual(HyperbolicNovelty()(-5), 1.0)
+        self.assertEqual(LogNovelty()(-5), 1.0)
+
+    def test_every_registered_model_preserves_the_ordering_property(self):
+        corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)
+        for n in range(15):
+            corpus.add(item(f"NVDA surges to a record high on strong growth {n}"))
+        corpus.add(item("AMD quietly wins a design slot"))
+
+        for name, model in NOVELTY_MODELS.items():
+            with self.subTest(shape=name):
+                index = AsymmetryIndex(corpus=corpus, novelty_model=model)
+                crowded = index.compute_measured("NVDA", 0.85, term="NVDA").score
+                quiet = index.compute_measured("AMD", 0.85, term="AMD").score
+                self.assertGreater(quiet, crowded)
+
+    def test_swapping_the_shape_raises_the_reachable_ceiling(self):
+        # The defect Phase 2.1 documents: at the shipped shape, two mentions
+        # cannot reach the router's watchlist threshold at any confidence.
+        shipped = AsymmetryIndex()
+        self.assertLess(shipped.compute_asymmetry("x", 1.0, 0.0, 2, 0.0), 0.4)
+        slower = AsymmetryIndex(novelty_model=NOVELTY_MODELS["hyperbolic-8"])
+        self.assertGreater(slower.compute_asymmetry("x", 1.0, 0.0, 2, 0.0), 0.4)
+
+
+class TestPolarityDamping(unittest.TestCase):
+    """Crowd sentiment must not saturate on a single matched word."""
+
+    def test_one_matched_word_is_a_weak_opinion(self):
+        weak = _lexicon_polarity("shares surge")
+        self.assertGreater(weak, 0.0)
+        self.assertLess(weak, 0.5)
+
+    def test_more_evidence_means_more_confidence(self):
+        weak = _lexicon_polarity("shares surge")
+        strong = _lexicon_polarity("shares surge to a record on strong profit growth")
+        self.assertGreater(strong, weak)
+
+    def test_polarity_stays_bounded(self):
+        saturated = _lexicon_polarity(" ".join(["surge record strong growth profit gains"] * 20))
+        self.assertLessEqual(saturated, 1.0)
+
+    def test_mixed_and_empty_text_is_neutral(self):
+        self.assertEqual(_lexicon_polarity("surge and plunge"), 0.0)
+        self.assertEqual(_lexicon_polarity(""), 0.0)
+        self.assertEqual(_lexicon_polarity("no polarity words at all here"), 0.0)
+
+    def test_crowd_sentiment_no_longer_pins_rarity_to_its_floor(self):
+        corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)
+        for n in range(12):
+            corpus.add(item(f"NVDA surges to a record high on strong growth {n}"))
+        # Saturation would put this at exactly 1.0, flooring rarity at 0.01.
+        self.assertLess(corpus.crowd_sentiment("NVDA", NOW), 0.95)
+
+
+class TestRouterReachability(unittest.TestCase):
+    """The router must be able to say something other than 'ignore'."""
+
+    def test_an_uncovered_term_reaches_watchlist(self):
+        corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)
+        corpus.add(item("NVDA beats"))
+        router = SignalRouter(corpus=corpus)
+        result = router.route("QQQQ setup", confidence=0.85, term="QQQQ")
+        self.assertEqual(result["asymmetry"]["news_count"], 0)
+        self.assertEqual(result["decision"], "watchlist")
+
+    def test_a_saturated_bullish_term_is_ignored(self):
+        corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)
+        for n in range(25):
+            corpus.add(item(f"NVDA surges to a record high on strong growth {n}"))
+        router = SignalRouter(corpus=corpus)
+        self.assertEqual(router.route("NVDA setup", confidence=0.95, term="NVDA")["decision"], "ignore")
 
 if __name__ == "__main__":
     unittest.main()

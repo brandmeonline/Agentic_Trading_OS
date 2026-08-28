@@ -1,9 +1,92 @@
 # asymmetry_index.py – calculate how early and unique a signal is compared to crowd trends
 
 import hashlib
+import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+
+# =============================================================================
+# Novelty models
+# =============================================================================
+#
+# Novelty is the term that punishes coverage, and its shape decides the whole
+# score range. The original shape is hyperbolic, 1/(n+1), which decays so fast
+# that any term with two or more mentions cannot clear SignalRouter's 0.4
+# watchlist threshold at any confidence. See docs/ULTRA_PLAN.md Phase 2.1.
+#
+# Both shapes are implemented so the choice can be made against evidence
+# (tools/asymmetry_calibration.py) rather than by assertion. HYPERBOLIC remains
+# the default: changing it changes what the system would route, which is an
+# owner's decision, not a refactor.
+
+
+class NoveltyModel:
+    """Maps a mention count to a novelty multiplier in (0, 1]."""
+
+    name = "novelty"
+
+    def __call__(self, news_count: int) -> float:
+        raise NotImplementedError
+
+    def describe(self) -> str:
+        return self.name
+
+
+class HyperbolicNovelty(NoveltyModel):
+    """``k / (k + n)``. With k=1 this is the original ``1 / (n + 1)``.
+
+    Larger k decays more slowly. k is the mention count at which novelty has
+    fallen to one half.
+    """
+
+    name = "hyperbolic"
+
+    def __init__(self, half_life: float = 1.0):
+        if half_life <= 0:
+            raise ValueError("half_life must be > 0")
+        self.half_life = float(half_life)
+
+    def __call__(self, news_count: int) -> float:
+        return self.half_life / (self.half_life + max(0, news_count))
+
+    def describe(self) -> str:
+        return f"hyperbolic(half_life={self.half_life:g})"
+
+
+class LogNovelty(NoveltyModel):
+    """``1 / (1 + log1p(n) / scale)``.
+
+    Decays far more slowly than hyperbolic, so a term with real coverage keeps
+    a usable score and the router's existing thresholds stay reachable.
+    """
+
+    name = "log"
+
+    def __init__(self, scale: float = 1.0):
+        if scale <= 0:
+            raise ValueError("scale must be > 0")
+        self.scale = float(scale)
+
+    def __call__(self, news_count: int) -> float:
+        return 1.0 / (1.0 + math.log1p(max(0, news_count)) / self.scale)
+
+    def describe(self) -> str:
+        return f"log(scale={self.scale:g})"
+
+
+#: The shape shipped today. Preserves existing behaviour exactly.
+DEFAULT_NOVELTY = HyperbolicNovelty(half_life=1.0)
+
+#: Named shapes for the calibration tool and for configuration.
+NOVELTY_MODELS: Dict[str, NoveltyModel] = {
+    "hyperbolic": DEFAULT_NOVELTY,
+    "hyperbolic-3": HyperbolicNovelty(half_life=3.0),
+    "hyperbolic-8": HyperbolicNovelty(half_life=8.0),
+    "log": LogNovelty(scale=1.0),
+    "log-2": LogNovelty(scale=2.0),
+}
 
 
 @dataclass
@@ -41,11 +124,19 @@ class AsymmetryIndex:
     the caller. Without one, behaviour is unchanged.
     """
 
-    def __init__(self, corpus: Optional[Any] = None, analyzer: Optional[Callable[[str], float]] = None):
+    def __init__(
+        self,
+        corpus: Optional[Any] = None,
+        analyzer: Optional[Callable[[str], float]] = None,
+        novelty_model: Optional[NoveltyModel] = None,
+    ):
         self.signal_hashes = {}
         self.trend_sentiment_db = {}
         self.corpus = corpus
         self.analyzer = analyzer
+        # None means the shipped shape. Passing a model is an explicit opt-in to
+        # a different score range, and therefore to different routing.
+        self.novelty_model = novelty_model or DEFAULT_NOVELTY
 
     def _hash_signal(self, text):
         return hashlib.sha256(text.encode()).hexdigest()
@@ -70,7 +161,7 @@ class AsymmetryIndex:
         """
         # Lower crowd sentiment + few mentions + high confidence = high asymmetry
         rarity = max(1 - crowd_sentiment, 0.01)
-        novelty = max(1 / (news_count + 1), 0.01)
+        novelty = max(self.novelty_model(news_count), 0.01)
         alignment = confidence
 
         # GIS factor adds boost for regional patterns others are ignoring

@@ -666,16 +666,34 @@ _NEGATIVE = frozenset({
 })
 
 
+#: Matched polarity words needed before the lexicon is half-confident. Without
+#: this damping, ``(pos - neg) / (pos + neg)`` returns exactly ±1.0 for a
+#: headline containing a single polarity word, so crowd sentiment saturates on
+#: almost every real term. Saturated crowd sentiment pins the asymmetry index's
+#: rarity term at its floor and crushes the whole score range — see
+#: docs/ULTRA_PLAN.md Phase 2.1.
+_POLARITY_HALF_EVIDENCE = 2.0
+
+
 def _lexicon_polarity(text: str) -> float:
-    """Dependency-free polarity in [-1, 1]. Fallback when no analyzer is given."""
+    """Dependency-free polarity in [-1, 1]. Fallback when no analyzer is given.
+
+    Direction comes from the lexicon balance; magnitude is damped by how much
+    evidence there actually was, so one matched word is a weak opinion and five
+    is a strong one.
+    """
     tokens = re.findall(r"[a-z']+", text.lower())
     if not tokens:
         return 0.0
     positive = sum(1 for token in tokens if token in _POSITIVE)
     negative = sum(1 for token in tokens if token in _NEGATIVE)
-    if positive == negative:
+    matched = positive + negative
+    if matched == 0 or positive == negative:
         return 0.0
-    return (positive - negative) / float(positive + negative)
+
+    direction = (positive - negative) / float(matched)
+    confidence = matched / (matched + _POLARITY_HALF_EVIDENCE)
+    return direction * confidence
 
 
 # =============================================================================

@@ -1,6 +1,6 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 60% complete. Phases 1–4 landed; Phase 2.1, 5 and 6 open.
+**Status:** 65% complete. Phases 1–4 and 2.1 landed; Phases 5 and 6 open.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -81,7 +81,7 @@ measurement. This phase turns it into a measurement.
   higher than a saturated one, holding confidence fixed.
 - Without a corpus, output is byte-identical to the current implementation.
 
-## Phase 2.1 — Asymmetry calibration (P1b) — OPEN
+## Phase 2.1 — Asymmetry calibration (P1b) — LANDED (decision open)
 
 Attaching real measurement in Phase 2 exposed a pre-existing calibration defect
 in the score's shape. It is not caused by the corpus — the same ceiling applies
@@ -119,8 +119,43 @@ router emits `ignore` for everything the corpus has actually seen.
 - The ordering property from Phase 2 is preserved: uncrowded still outscores
   crowded at equal confidence.
 
-> Deliberately not fixed in-cycle: changing either the score shape or the
-> thresholds changes what the system would trade. That is the owner's call.
+### What landed
+
+- **A second, more binding defect was found and fixed.** `_lexicon_polarity`
+  returned exactly ±1.0 for a headline containing a single polarity word, so
+  crowd sentiment saturated on essentially every real term, pinning `rarity` at
+  its 0.01 floor and crushing the whole score range by ~13x independent of
+  novelty shape. Magnitude is now damped by how much evidence was actually
+  found. This is a measurement correction, not a policy change: it makes the
+  number reflect the corpus rather than overstate it.
+- **The novelty shape is now configurable**, with the shipped
+  `HyperbolicNovelty(half_life=1)` — the original `1 / (n + 1)` — still the
+  default, so routing behaviour is unchanged unless a shape is passed
+  explicitly. `NOVELTY_MODELS` registers hyperbolic (1, 3, 8) and log (1, 2).
+- **`tools/asymmetry_calibration.py`** reports, per shape: the reachability
+  ceiling, decisions on a fixture corpus, reachability by scenario, and an
+  ordering guard asserting that uncrowded still outscores crowded under every
+  shape.
+
+After the polarity fix the router is functional for the case the index exists to
+catch: an uncovered term at 0.85 confidence now scores 0.4250 and routes to
+`watchlist`. What remains unreachable is thin *covered* coverage — one to three
+bearish mentions — which under the shipped shape still lands in `ignore`.
+
+### The open decision
+
+| Shape | Max mentions still able to reach watchlist |
+| --- | ---: |
+| hyperbolic (shipped) | 1 |
+| log | 3 |
+| hyperbolic-3 | 4 |
+| hyperbolic-8 | 12 |
+| log-2 | 19 |
+
+> Deliberately not decided in-cycle: selecting a different shape, or moving the
+> router's 0.6/0.4 thresholds, changes what the system would trade. Run
+> `python tools/asymmetry_calibration.py` and pick. Until then the shipped
+> default stands and nothing about routing has changed.
 
 ## Phase 3 — Safety and liveness fixes (P2) — LANDED
 
@@ -215,13 +250,13 @@ progress reflects work delivered rather than boxes ticked.
 | --- | ---: | --- |
 | 1 — Ingestion layer | 25% | landed |
 | 2 — Measured asymmetry | 10% | landed |
-| 2.1 — Asymmetry calibration | 5% | open |
+| 2.1 — Asymmetry calibration | 5% | landed |
 | 3 — Safety and liveness | 10% | landed |
 | 4 — Report layer | 15% | landed |
 | 5 — Event-driven alerts | 15% | open |
 | 6 — Dashboard consolidation | 20% | open |
 
-**Complete: 60%.**
+**Complete: 65%.**
 
 ## Sequencing
 
