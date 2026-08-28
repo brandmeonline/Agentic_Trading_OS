@@ -42,8 +42,12 @@ jobs:
           python -m pytest -q \
             "Alpha IO/tests/test_advanced_modules.py" \
             "Alpha IO/tests/test_agent.py" \
+            "Alpha IO/tests/test_asymmetry_measured.py" \
             "Alpha IO/tests/test_credentials_security.py" \
+            "Alpha IO/tests/test_headroom_compress.py" \
             "Alpha IO/tests/test_ledger_execution.py" \
+            "Alpha IO/tests/test_llm_client.py" \
+            "Alpha IO/tests/test_news_feed.py" \
             "Alpha IO/tests/test_plan_milestones.py" \
             "Alpha IO/tests/test_rest_api_security.py" \
             "Alpha IO/tests/test_risk.py" \

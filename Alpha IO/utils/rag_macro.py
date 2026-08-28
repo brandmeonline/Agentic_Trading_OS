@@ -1,5 +1,5 @@
 # rag_macro.py – plug macro context into signal confidence scoring
-import openai
+from core.llm_client import chat
 
 def query_macro_context(prompt):
     # Placeholder using OpenAI - will be integrated with a macro source + vector DB.
@@ -12,11 +12,7 @@ def query_macro_context(prompt):
     # Opt-in, default-off context compression (identity unless ALPHAIO_HEADROOM=1).
     from utils.headroom_compress import compress_messages
     messages = compress_messages(messages, surface="rag_macro")
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=messages
-    )
-    return response["choices"][0]["message"]["content"]
+    return chat(messages)
 
 def evaluate_macro_threat_level():
     prompt = "What is the likely market impact of the next FOMC meeting and current CPI trends?"

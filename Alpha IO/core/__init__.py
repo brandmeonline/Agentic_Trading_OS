@@ -54,6 +54,15 @@ except ImportError:
     AsymmetryIndex = None
 
 try:
+    from core.news_feed import NewsFeedService, NewsCorpus, FeedSource, NewsItem
+    __all__.extend(["NewsFeedService", "NewsCorpus", "FeedSource", "NewsItem"])
+except ImportError:
+    NewsFeedService = None
+    NewsCorpus = None
+    FeedSource = None
+    NewsItem = None
+
+try:
     from core.auto_tuner import AutoTuner
     __all__.append("AutoTuner")
 except ImportError:

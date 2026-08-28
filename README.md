@@ -25,4 +25,6 @@ core/auto_tuner.py: Learns when to be aggressive
 core/asymmetry_index.py: Measures signal uniqueness
 core/signal_memory.py: Long-term signal embedding
 core/precision_trade_planner.py: Maps alpha to futures/options
-core/signal_router.py: Chooses trade, watchlist, or ignore# Agentic_Trading_OS
+core/signal_router.py: Chooses trade, watchlist, or ignore
+core/news_feed.py: RSS/Atom/EDGAR ingestion and the rolling crowding corpus
+core/llm_client.py: Single access point for the openai>=1.0 SDK# Agentic_Trading_OS
