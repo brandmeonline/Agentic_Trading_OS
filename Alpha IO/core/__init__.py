@@ -71,6 +71,22 @@ except ImportError:
     Interval = None
 
 try:
+    from core.services import (
+        BackgroundServices, ServiceConfig, start_background_services,
+        stop_background_services, get_background_services,
+    )
+    __all__.extend([
+        "BackgroundServices", "ServiceConfig", "start_background_services",
+        "stop_background_services", "get_background_services",
+    ])
+except ImportError:
+    BackgroundServices = None
+    ServiceConfig = None
+    start_background_services = None
+    stop_background_services = None
+    get_background_services = None
+
+try:
     from core.reports import (
         BriefGenerator, MorningBrief, install_morning_brief, install_corpus_alert_sweep,
     )

@@ -1036,13 +1036,18 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # Terminal (market view) — Phase 6 of docs/ULTRA_PLAN.md
     # ==========================================================================
 
-    def _corpus():
-        """The process-wide ingestion corpus, or None when unavailable."""
+    def _feed_service():
+        """The process-wide feed service, or None when unavailable."""
         try:
             from core.news_feed import get_news_service
-            return get_news_service().corpus
+            return get_news_service()
         except Exception:
             return None
+
+    def _corpus():
+        """The process-wide ingestion corpus, or None when unavailable."""
+        service = _feed_service()
+        return service.corpus if service is not None else None
 
     @app.route("/terminal")
     @login_required
@@ -1065,10 +1070,17 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
 
         items = corpus.recent()
         items.sort(key=lambda item: item.published, reverse=True)
+
+        # An empty tape means one of two things. Say which.
+        service = _feed_service()
+        polled = bool(service and service.poll_count)
         return jsonify({
             "available": True,
+            "polled": polled,
+            "reason": None if polled else "ingestion has not polled yet (set ALPHAIO_INGEST=1)",
             "items": [item.to_dict() for item in items[:limit]],
             "stats": corpus.stats(),
+            "service": service.stats() if service is not None else None,
         })
 
     @app.route("/api/terminal/candidates")

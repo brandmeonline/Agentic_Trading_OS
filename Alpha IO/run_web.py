@@ -60,18 +60,29 @@ def main():
         print("WEB_SECRET_KEY or SECRET_KEY is required when WEB_DEBUG is not true.")
         return 1
 
+    # Background services (ingestion, scheduled brief, corpus alert sweep) are
+    # all opt-in. Starting the dashboard must not silently begin polling
+    # external feeds; see core/services.py for the environment variables.
+    from core.services import describe_startup, start_background_services, stop_background_services
+
+    services = start_background_services()
+    print(f"  {describe_startup(services)}")
+
     print(f"\n  Starting web server...")
     print(f"  URL: http://localhost:{port}")
     print("  Login: configured admin user")
     print("\n  Press Ctrl+C to stop.\n")
 
-    run_server(
-        host=host,
-        port=port,
-        debug=debug,
-        admin_password=password,
-        admin_password_hash_path=str(password_hash_file)
-    )
+    try:
+        run_server(
+            host=host,
+            port=port,
+            debug=debug,
+            admin_password=password,
+            admin_password_hash_path=str(password_hash_file)
+        )
+    finally:
+        stop_background_services()
     return 0
 
 if __name__ == "__main__":

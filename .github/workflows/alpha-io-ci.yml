@@ -54,6 +54,7 @@ jobs:
             "Alpha IO/tests/test_rest_api_security.py" \
             "Alpha IO/tests/test_risk.py" \
             "Alpha IO/tests/test_run_web_security.py" \
+            "Alpha IO/tests/test_services.py" \
             "Alpha IO/tests/test_terminal_view.py" \
             "Alpha IO/tests/test_unified_engine.py" \
             "Alpha IO/tests/test_web_security.py"

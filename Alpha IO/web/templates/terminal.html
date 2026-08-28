@@ -128,8 +128,14 @@
                 }
                 const items = data.items || [];
                 if (!items.length) {
-                    badge.textContent = 'empty';
-                    tape.innerHTML = '<p class="text-muted">No documents in the window yet.</p>';
+                    // Never polled and polled-but-quiet look identical on screen
+                    // unless we say which one it is.
+                    badge.textContent = data.polled ? 'empty' : 'not started';
+                    tape.innerHTML = '<p class="text-muted">' +
+                        escapeHtml(data.polled
+                            ? 'No documents in the window yet.'
+                            : (data.reason || 'Ingestion has not polled yet.')) +
+                        '</p>';
                     return;
                 }
 

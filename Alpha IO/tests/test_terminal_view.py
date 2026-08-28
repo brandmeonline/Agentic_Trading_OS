@@ -111,6 +111,20 @@ class TestNewsTape(TerminalCase):
         self.assertTrue(payload["available"])
         self.assertEqual(payload["items"], [])
 
+    def test_never_polled_is_distinguished_from_polled_and_empty(self):
+        # These look identical on screen unless the API says which one it is.
+        self.login()
+        self.attach_corpus(NewsCorpus(window_hours=24, clock=lambda: NOW))
+
+        payload = self.client.get("/api/terminal/news").get_json()
+        self.assertFalse(payload["polled"])
+        self.assertIn("ALPHAIO_INGEST", payload["reason"])
+
+        get_news_service().poll_count = 1
+        payload = self.client.get("/api/terminal/news").get_json()
+        self.assertTrue(payload["polled"])
+        self.assertIsNone(payload["reason"])
+
     def test_returns_documents_newest_first(self):
         self.login()
         corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)

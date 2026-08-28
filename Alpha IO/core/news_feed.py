@@ -772,6 +772,11 @@ class NewsFeedService:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self.last_stats = IngestStats()
+        # An empty corpus means one of two very different things: nobody has
+        # polled yet, or we polled and there was nothing. The UI must not
+        # present the first as the second.
+        self.poll_count = 0
+        self.last_poll_at: Optional[datetime] = None
 
     def add_source(self, source: FeedSource) -> None:
         if any(existing.name == source.name for existing in self.sources):
@@ -810,6 +815,8 @@ class NewsFeedService:
                     stored.append(item)
 
         stats.stored = len(stored)
+        self.poll_count += 1
+        self.last_poll_at = now
         self.corpus.purge(now)
 
         if self.nlp_engine is not None:
@@ -863,6 +870,9 @@ class NewsFeedService:
         return {
             "sources": len(self.sources),
             "enabled": sum(1 for source in self.sources if source.enabled),
+            "running": self._thread is not None and self._thread.is_alive(),
+            "poll_count": self.poll_count,
+            "last_poll_at": self.last_poll_at.isoformat() if self.last_poll_at else None,
             "last_sweep": self.last_stats.to_dict(),
             "corpus": self.corpus.stats(),
         }

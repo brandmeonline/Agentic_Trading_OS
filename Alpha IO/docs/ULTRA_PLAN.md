@@ -1,6 +1,6 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 92% complete. Phases 1–5 landed; Phase 6 partially landed and blocked on a data-source decision.
+**Status:** 93% complete on a corrected basis (see Completion tracking). Phases 1–5 and 7 landed; Phase 6 partially landed and blocked on a data-source decision.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -276,28 +276,73 @@ invented breadth is worse than no panel.
 
 ---
 
+## Phase 7 — Runtime wiring (P6) — LANDED
+
+Phases 1 through 6 delivered components. Nothing composed them. The feed service
+was a process-wide singleton that no code ever polled, the scheduler had no jobs
+registered, no brief was ever generated, and the corpus alert sweep never ran.
+The terminal rendered an empty corpus because the corpus was empty and, without
+this phase, always would be.
+
+This was a gap in the tracking as much as in the code: "landed" was being
+measured on components plus tests, with integration counted implicitly by no
+one. Hence the corrected basis below.
+
+### Scope
+
+- `core/services.py` — one composition root owning the lifetime of the
+  ingestion loop and the scheduled jobs, with every collaborator injectable so
+  tests never touch the network.
+- **Everything off by default.** Launching the dashboard must not silently begin
+  polling external feeds; that is an operator's decision, consistent with how
+  live trading and the Headroom adapter are gated here. Enabled per-piece via
+  `ALPHAIO_INGEST`, `ALPHAIO_BRIEF`, `ALPHAIO_CORPUS_ALERTS`.
+- `run_web.py` starts services before serving and stops them in a `finally`,
+  printing what it started so an operator can see the state.
+- The feed service tracks `poll_count` / `last_poll_at`, and the terminal
+  distinguishes **never polled** from **polled and quiet** — the two look
+  identical on screen otherwise, and only one of them is a problem.
+
+### Pass criteria
+
+- Default configuration starts nothing; the test suite asserts it.
+- A second `start()` does not launch a second loop against the same sources.
+- A raising collaborator does not break shutdown.
+
 ## Completion tracking
 
 Percentages are weighted by scope, not by phase count, so a cycle's reported
 progress reflects work delivered rather than boxes ticked.
 
+Percentages are weighted by scope, not by phase count, so a cycle's reported
+progress reflects work delivered rather than boxes ticked.
+
+> **The basis was corrected once.** Through Phase 6 the weights covered
+> component delivery only, with no line item for composing those components into
+> the running system — which is why every phase read "landed" while none of it
+> actually ran. Phase 7 was added and the weights renormalised. On the corrected
+> basis the pre-Phase-7 figure was 82%, not 92%. No work was lost; the
+> denominator was wrong.
+
 | Phase | Weight | State |
 | --- | ---: | --- |
-| 1 — Ingestion layer | 25% | landed |
-| 2 — Measured asymmetry | 10% | landed |
+| 1 — Ingestion layer | 22% | landed |
+| 2 — Measured asymmetry | 9% | landed |
 | 2.1 — Asymmetry calibration | 5% | landed |
-| 3 — Safety and liveness | 10% | landed |
-| 4 — Report layer | 15% | landed |
-| 5 — Event-driven alerts | 15% | landed |
-| 6 — Dashboard consolidation | 20% | 12% landed, 8% blocked |
+| 3 — Safety and liveness | 9% | landed |
+| 4 — Report layer | 13% | landed |
+| 5 — Event-driven alerts | 13% | landed |
+| 6 — Dashboard consolidation | 18% | 11% landed, 7% blocked |
+| 7 — Runtime wiring | 11% | landed |
 
-**Complete: 92%.** The remaining 8% is blocked, not outstanding — see Phase 6.
+**Complete: 93%.** The remaining 7% is blocked, not outstanding — see Phase 6.
 
 ## Sequencing
 
 Phases 1–3 are independent of each other in implementation and land together in
 the first development pass. Phase 2 depends on Phase 1's corpus at runtime but not
-at build time. Phases 4–6 each depend on Phase 1 having landed.
+at build time. Phases 4–6 each depend on Phase 1 having landed. Phase 7 depends on 1, 4 and
+5, and is what makes any of them observable at runtime.
 
 ## Out of scope
 
