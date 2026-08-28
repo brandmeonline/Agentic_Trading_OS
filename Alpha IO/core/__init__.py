@@ -63,6 +63,22 @@ except ImportError:
     NewsItem = None
 
 try:
+    from core.scheduler import Scheduler, DailyAt, Interval
+    __all__.extend(["Scheduler", "DailyAt", "Interval"])
+except ImportError:
+    Scheduler = None
+    DailyAt = None
+    Interval = None
+
+try:
+    from core.reports import BriefGenerator, MorningBrief, install_morning_brief
+    __all__.extend(["BriefGenerator", "MorningBrief", "install_morning_brief"])
+except ImportError:
+    BriefGenerator = None
+    MorningBrief = None
+    install_morning_brief = None
+
+try:
     from core.auto_tuner import AutoTuner
     __all__.append("AutoTuner")
 except ImportError:

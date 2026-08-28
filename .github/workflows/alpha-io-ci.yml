@@ -49,6 +49,7 @@ jobs:
             "Alpha IO/tests/test_llm_client.py" \
             "Alpha IO/tests/test_news_feed.py" \
             "Alpha IO/tests/test_plan_milestones.py" \
+            "Alpha IO/tests/test_reports_scheduler.py" \
             "Alpha IO/tests/test_rest_api_security.py" \
             "Alpha IO/tests/test_risk.py" \
             "Alpha IO/tests/test_run_web_security.py" \

@@ -1,6 +1,6 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** Phases 1–3 landed. Phases 4–6 open.
+**Status:** 60% complete. Phases 1–4 landed; Phase 2.1, 5 and 6 open.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -81,6 +81,47 @@ measurement. This phase turns it into a measurement.
   higher than a saturated one, holding confidence fixed.
 - Without a corpus, output is byte-identical to the current implementation.
 
+## Phase 2.1 — Asymmetry calibration (P1b) — OPEN
+
+Attaching real measurement in Phase 2 exposed a pre-existing calibration defect
+in the score's shape. It is not caused by the corpus — the same ceiling applies
+to the literal-argument path — but measurement is what made it visible.
+
+`score = confidence x rarity x novelty x (1 + gis)` where
+`novelty = 1 / (news_count + 1)`. Novelty decays hyperbolically, so it dominates
+every other term:
+
+| news_count | max achievable score (confidence 1.0, crowd 0.0) |
+| ---: | ---: |
+| 0 | 1.0000 |
+| 1 | 0.5000 |
+| 2 | 0.3333 |
+| 5 | 0.1667 |
+| 10 | 0.0909 |
+
+`SignalRouter` routes `trade` at >= 0.6 and `watchlist` at >= 0.4. So **any term
+with two or more mentions can never reach watchlist, at any confidence**, and
+`trade` requires literally zero coverage plus a bearish crowd. In practice the
+router emits `ignore` for everything the corpus has actually seen.
+
+### Scope
+
+- Reshape novelty so coverage damps the score without collapsing it (log or
+  saturating decay), **or** recalibrate the router's thresholds to the real
+  output range. These are different bets and the choice is a trading decision,
+  not a refactor.
+- Backtest the chosen shape against `data/` fixtures before changing any
+  threshold.
+
+### Pass criteria
+
+- A term with moderate coverage and high confidence can reach `watchlist`.
+- The ordering property from Phase 2 is preserved: uncrowded still outscores
+  crowded at equal confidence.
+
+> Deliberately not fixed in-cycle: changing either the score shape or the
+> thresholds changes what the system would trade. That is the owner's call.
+
 ## Phase 3 — Safety and liveness fixes (P2) — LANDED
 
 **Ships:** changes to `core/signal_memory.py`, `core/signal_augment.py`,
@@ -105,7 +146,7 @@ Not gaps — code that cannot run as written.
   `AttributeError` from a removed SDK symbol.
 - A ticker field containing an expression is rejected, not executed.
 
-## Phase 4 — Report layer (P3) — OPEN
+## Phase 4 — Report layer (P3) — LANDED
 
 **Ships:** `core/scheduler.py`, `core/reports.py`
 
@@ -164,6 +205,23 @@ currently spent entirely on price thresholds.
 - Playwright interactive verification per the existing `PLAN.md` convention.
 
 ---
+
+## Completion tracking
+
+Percentages are weighted by scope, not by phase count, so a cycle's reported
+progress reflects work delivered rather than boxes ticked.
+
+| Phase | Weight | State |
+| --- | ---: | --- |
+| 1 — Ingestion layer | 25% | landed |
+| 2 — Measured asymmetry | 10% | landed |
+| 2.1 — Asymmetry calibration | 5% | open |
+| 3 — Safety and liveness | 10% | landed |
+| 4 — Report layer | 15% | landed |
+| 5 — Event-driven alerts | 15% | open |
+| 6 — Dashboard consolidation | 20% | open |
+
+**Complete: 60%.**
 
 ## Sequencing
 
