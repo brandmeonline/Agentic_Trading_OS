@@ -429,6 +429,27 @@ class BriefGenerator:
             pass
 
 
+def install_corpus_alert_sweep(
+    scheduler: Any,
+    alert_manager: Any,
+    corpus: Any,
+    interval_seconds: float = 60.0,
+    asymmetry_index: Optional[Any] = None,
+    name: str = "corpus-alerts",
+) -> Any:
+    """Register a recurring corpus alert sweep on a scheduler.
+
+    Sweeping often is safe: cooldown and max-triggers live in the alert, not in
+    the cadence, so a one-minute sweep does not mean a one-minute alert.
+    """
+    from core.scheduler import Interval
+    return scheduler.add_job(
+        name,
+        Interval(interval_seconds),
+        lambda: alert_manager.update_from_corpus(corpus, asymmetry_index=asymmetry_index),
+    )
+
+
 def install_morning_brief(
     scheduler: Any,
     generator: BriefGenerator,

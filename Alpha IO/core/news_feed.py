@@ -597,6 +597,27 @@ class NewsCorpus:
         """
         return len(self.matches(term, now))
 
+    def mention_velocity(
+        self,
+        term: str,
+        hours: float = 1.0,
+        now: Optional[datetime] = None,
+    ) -> float:
+        """Mentions per hour over the trailing ``hours``.
+
+        A rate rather than a count, so an alert threshold means the same thing
+        whatever window a caller asks for. This is what catches a story
+        breaking, which a cumulative mention count cannot: 20 mentions spread
+        over a day and 20 in the last ten minutes are the same number and very
+        different events.
+        """
+        if hours <= 0:
+            raise ValueError("hours must be > 0")
+        now = now or self._clock()
+        cutoff = now - timedelta(hours=hours)
+        recent = [item for item in self.matches(term, now) if item.published >= cutoff]
+        return len(recent) / hours
+
     def crowd_sentiment(
         self,
         term: str,

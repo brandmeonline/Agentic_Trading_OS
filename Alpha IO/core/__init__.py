@@ -71,12 +71,18 @@ except ImportError:
     Interval = None
 
 try:
-    from core.reports import BriefGenerator, MorningBrief, install_morning_brief
-    __all__.extend(["BriefGenerator", "MorningBrief", "install_morning_brief"])
+    from core.reports import (
+        BriefGenerator, MorningBrief, install_morning_brief, install_corpus_alert_sweep,
+    )
+    __all__.extend([
+        "BriefGenerator", "MorningBrief", "install_morning_brief",
+        "install_corpus_alert_sweep",
+    ])
 except ImportError:
     BriefGenerator = None
     MorningBrief = None
     install_morning_brief = None
+    install_corpus_alert_sweep = None
 
 try:
     from core.auto_tuner import AutoTuner

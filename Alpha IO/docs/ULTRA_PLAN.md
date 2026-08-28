@@ -1,6 +1,6 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 65% complete. Phases 1–4 and 2.1 landed; Phases 5 and 6 open.
+**Status:** 80% complete. Phases 1–5 landed; Phase 6 open.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -201,7 +201,7 @@ and `core/advanced_analytics.py`; only the cadence and the prose are missing.
 - Brief generation is deterministic under a seeded corpus and frozen clock.
 - Scheduler survives a missed window without double-firing.
 
-## Phase 5 — Event-driven alerts (P4) — OPEN
+## Phase 5 — Event-driven alerts (P4) — LANDED
 
 **Ships:** changes to `core/alerts.py`
 
@@ -253,10 +253,10 @@ progress reflects work delivered rather than boxes ticked.
 | 2.1 — Asymmetry calibration | 5% | landed |
 | 3 — Safety and liveness | 10% | landed |
 | 4 — Report layer | 15% | landed |
-| 5 — Event-driven alerts | 15% | open |
+| 5 — Event-driven alerts | 15% | landed |
 | 6 — Dashboard consolidation | 20% | open |
 
-**Complete: 65%.**
+**Complete: 80%.**
 
 ## Sequencing
 
