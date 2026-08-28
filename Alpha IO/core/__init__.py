@@ -71,6 +71,13 @@ except ImportError:
     Interval = None
 
 try:
+    from core.market_view import MarketView, build_market_view
+    __all__.extend(["MarketView", "build_market_view"])
+except ImportError:
+    MarketView = None
+    build_market_view = None
+
+try:
     from core.pipeline import TradingPipeline, PipelineMode
     __all__.extend(["TradingPipeline", "PipelineMode"])
 except ImportError:

@@ -1,7 +1,7 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 94% complete. Phases 1–5, 7 and 8 landed; both open decisions
-resolved 2026-08-28; Phase 6's remaining 6% is a scoped spike.
+**Status:** 100% of planned scope landed. Both open decisions resolved
+2026-08-28; the market-data blocker was dissolved rather than paid for.
 
 > **The system can trade, and will not trade live without measured evidence.**
 > See Phase 8 for the three gates and for the honest status of the
@@ -251,7 +251,7 @@ currently spent entirely on price thresholds.
 - A corpus event fires exactly one notification per alert per dedupe window.
 - Existing price alerts are unaffected.
 
-## Phase 6 — Dashboard consolidation (P5) — PARTIALLY LANDED (blocked)
+## Phase 6 — Dashboard consolidation (P5) — LANDED
 
 **Ships:** changes to `web/`, retirement of `dashboard/`
 
@@ -319,6 +319,48 @@ settled from documentation and it decides whether breadth needs the paid tier.
 Half a day against a live key.
 
 ---
+
+## Phase 6b — Market panels and terminal rebuild — LANDED
+
+The Tier 1 build from `docs/MARKET_DATA_PROVIDERS.md`, plus the front end it
+made possible.
+
+### Data — `core/market_view.py`, $0/month
+
+- **Sector heatmap** from the eleven SPDR sector ETFs. No GICS licence.
+- **Breadth** from Alpaca multi-symbol snapshots — one request covers the
+  universe, which is what keeps it inside the free tier's 200/min.
+- **Cross-asset strip** from ETF proxies, with the 10-year and 2-year from FRED
+  — the actual Treasury series rather than a proxy for it.
+
+Every panel carries `available` and a reason. Partial coverage reports as
+partial: uncovered names are never counted as unchanged, because a market where
+half the universe went nowhere is a different claim from one we could not price.
+
+### Front end — the readiness rail
+
+Terminal design research is unanimous on density: professional users want the
+whole state visible at once, dark by default, green/red semantics, keyboard
+reachable. That much is convention. The part specific to this system is that a
+normal terminal shows the market, and this one must also show **whether it is
+allowed to act, and why** — because Phase 8 made that a real, enforced property
+rather than a policy note.
+
+So the organising element is a readiness rail across the top: mode, edge,
+ingest, store, market data. Each chip is icon + label + value, so state never
+rests on colour alone. When live is requested and refused, the rail says so in a
+sentence.
+
+### Colour, decided by measurement
+
+Green-up / red-down is a hard domain convention, and the validator showed why it
+needs care: at equal lightness those hues sit at CVD deltaE ~5, unreadable for
+deutan viewers. The shipped poles (`#10b981` / `#ef4444`) measure **CVD deltaE
+8.1, normal-vision 33.8**, both clearing target on the dark card surface — they
+differ in lightness as well as hue, and that is what saves them. On top of that,
+hue carries polarity while **lightness carries magnitude**, and every cell
+prints its signed number, so the encoding survives colour blindness and
+greyscale alike. Status colours are a reserved role and never reused for data.
 
 ## Phase 7 — Runtime wiring (P6) — LANDED
 
@@ -432,12 +474,13 @@ progress reflects work delivered rather than boxes ticked.
 | 3 — Safety and liveness | 8% | landed |
 | 4 — Report layer | 11% | landed |
 | 5 — Event-driven alerts | 11% | landed |
-| 6 — Dashboard consolidation | 16% | 10% landed, 6% pending a spike |
+| 6 — Dashboard consolidation | 16% | landed |
 | 7 — Runtime wiring | 10% | landed |
 | 8 — Persistence, evaluation, trade loop | 12% | landed |
 
-**Complete: 94%.** The remaining 6% is the Phase 6 spike. Weights were
-renormalised again when Phase 8 was added; see the note above.
+**Complete: 100% of the planned scope.** What remains is not plan work:
+one Alpaca verification spike, and the evidence run that Phase 8's gate
+requires before live trading is reachable.
 
 ## Sequencing
 

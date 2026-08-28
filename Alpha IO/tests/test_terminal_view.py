@@ -98,8 +98,16 @@ class TestAuthentication(TerminalCase):
         response = self.client.get("/terminal")
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
-        self.assertIn("News tape", body)
-        self.assertIn("Uncrowded candidates", body)
+        for panel in ("Sectors", "Breadth", "Candidates", "Tape", "Watchlist", "Brief"):
+            self.assertIn(">" + panel + "<", body)
+
+    def test_readiness_rail_is_present(self):
+        # The panel that distinguishes this terminal: it reports whether a
+        # signal could reach a broker, not only what the market is doing.
+        self.login()
+        body = self.client.get("/terminal").get_data(as_text=True)
+        for chip in ("chip-mode", "chip-edge", "chip-ingest", "chip-store", "chip-data"):
+            self.assertIn(chip, body)
 
 
 class TestNewsTape(TerminalCase):
@@ -239,6 +247,39 @@ class TestServiceSingleton(unittest.TestCase):
         replacement = NewsFeedService(sources=[])
         set_news_service(replacement)
         self.assertIs(get_news_service(), replacement)
+
+
+class TestMarketPanels(TerminalCase):
+    def test_requires_login(self):
+        for route in ("/api/terminal/market", "/api/terminal/readiness"):
+            with self.subTest(route=route):
+                self.assertEqual(self.client.get(route).status_code, 302)
+
+    def test_market_reports_unconfigured_rather_than_faking(self):
+        self.login()
+        payload = self.client.get("/api/terminal/market").get_json()
+        # No Alpaca credentials in the test environment, so every panel must
+        # say so rather than render invented sector moves.
+        for name in ("sector_heatmap", "breadth", "cross_asset"):
+            with self.subTest(panel=name):
+                panel = payload.get(name)
+                self.assertIsNotNone(panel)
+                self.assertFalse(panel["available"])
+                self.assertTrue(panel["reason"])
+
+    def test_readiness_reports_ingest_state(self):
+        self.login()
+        self.attach_corpus(NewsCorpus(window_hours=24, clock=lambda: NOW))
+        payload = self.client.get("/api/terminal/readiness").get_json()
+        self.assertIn("ingest", payload)
+        self.assertFalse(payload["ingest"]["polled"])
+        self.assertEqual(payload["ingest"]["detail"], "not started")
+
+    def test_readiness_reports_no_pipeline_when_none_is_running(self):
+        self.login()
+        payload = self.client.get("/api/terminal/readiness").get_json()
+        self.assertIsNone(payload["pipeline"])
+        self.assertIsNone(payload["edge"])
 
 
 if __name__ == "__main__":

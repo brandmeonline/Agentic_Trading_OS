@@ -1128,6 +1128,81 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
 
         return jsonify({"symbols": rows, "coverage_available": corpus is not None})
 
+    _market_view = {"instance": None}
+
+    def _market():
+        """Process-wide market view, built once from the environment."""
+        if _market_view["instance"] is None:
+            try:
+                from core.market_view import build_market_view
+                _market_view["instance"] = build_market_view()
+            except Exception:
+                app.logger.exception("market view construction failed")
+                return None
+        return _market_view["instance"]
+
+    @app.route("/api/terminal/market")
+    @login_required
+    def api_terminal_market():
+        """Sector heatmap, breadth, and the cross-asset strip."""
+        view = _market()
+        if view is None:
+            return jsonify({"available": False, "reason": "market view unavailable"})
+        try:
+            return jsonify(dict(view.all_panels(), available=True))
+        except Exception:
+            app.logger.exception("market panels failed")
+            return jsonify({"available": False, "reason": "market data request failed"}), 500
+
+    @app.route("/api/terminal/readiness")
+    @login_required
+    def api_terminal_readiness():
+        """What the system is allowed to do, and why.
+
+        The panel that makes this terminal different: it reports the gate state
+        rather than only the market, so an operator can see at a glance whether
+        a signal could reach a broker and what is stopping it.
+        """
+        payload = {
+            "ingest": {"running": False, "polled": False, "persisted": False, "detail": "not started"},
+            "pipeline": None,
+            "edge": None,
+            "services": [],
+        }
+
+        service = _feed_service()
+        if service is not None:
+            stats = service.stats()
+            corpus = stats.get("corpus", {})
+            payload["ingest"] = {
+                "running": bool(stats.get("running")),
+                "polled": bool(stats.get("poll_count")),
+                "poll_count": stats.get("poll_count", 0),
+                "last_poll_at": stats.get("last_poll_at"),
+                "persisted": bool(corpus.get("persisted")),
+                "items": corpus.get("items_in_window", 0),
+                "sources": len(corpus.get("sources", [])),
+                "load_error": corpus.get("load_error"),
+                "detail": "polling" if stats.get("running") else "not started",
+            }
+
+        try:
+            from core.services import get_background_services
+            services = get_background_services()
+        except Exception:
+            services = None
+
+        if services is not None:
+            payload["services"] = list(services.started)
+            if services.pipeline is not None:
+                gates = services.pipeline.gate_status()
+                payload["pipeline"] = gates
+                payload["edge"] = gates.get("edge")
+            elif services.pipeline_skipped:
+                payload["pipeline"] = {"skipped": services.pipeline_skipped}
+
+        return jsonify(payload)
+
     @app.route("/api/terminal/brief")
     @login_required
     def api_terminal_brief():
