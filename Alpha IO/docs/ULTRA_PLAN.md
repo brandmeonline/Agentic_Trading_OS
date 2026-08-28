@@ -266,13 +266,27 @@ data source this repo has:
 | Market breadth | Advance/decline and new-high/new-low across a broad universe |
 | Cross-asset strip (DXY, TNX, VIX, OIL) | FX, rates, volatility and commodity quotes |
 
-Alpaca covers equity and crypto bars, and nothing in the tree covers the rest.
-All three collapse to a single question: **which market-data provider, and is
-there a budget for a paid tier?** Free options (Stooq, FRED for rates, Yahoo
-endpoints) cover parts of it with delayed data and no redistribution rights;
-paid options (Polygon, Tiingo, Databento) cover all of it. Until that is
-answered these panels would have to be faked, and a terminal panel showing
-invented breadth is worse than no panel.
+**Evaluated — see `docs/MARKET_DATA_PROVIDERS.md`.** The blocker was
+narrower than it looked. Separating the three panels dissolves most of it:
+
+- Sector membership is not needed. The eleven SPDR sector ETFs *are* the
+  heatmap, and they are ordinary equities Alpaca already serves.
+- Indices can be proxied (UUP, VIXY, USO) or sourced free and authoritatively
+  (FRED `DGS10` for the 10-year, better than any equity proxy).
+- Alpaca's multi-symbol snapshot endpoint takes comma-separated symbols with a
+  10,000 limit and cursor pagination, so breadth across 500 names is one or two
+  REST calls — inside the free tier's 200 req/min.
+
+**Recommendation: Tier 1, $0/month** — Alpaca Basic + FRED + CBOE, accepting a
+15-minute staleness class. Breadth is a slow indicator; delayed advance/decline
+is fit for purpose. Upgrade to Alpaca Algo Trader Plus ($99/mo) only on a
+concrete trigger, and to Massive Indices Advanced (+$99/mo) only if the desk
+needs true index prints rather than proxies.
+
+**One spike still required, not a decision:** whether Basic's snapshot response
+populates `dailyBar`/`prevDailyBar` for non-IEX-traded names. It cannot be
+settled from documentation and it decides whether breadth needs the paid tier.
+Half a day against a live key.
 
 ---
 
