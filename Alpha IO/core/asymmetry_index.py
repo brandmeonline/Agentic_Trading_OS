@@ -12,14 +12,15 @@ from typing import Any, Callable, Dict, List, Optional
 # =============================================================================
 #
 # Novelty is the term that punishes coverage, and its shape decides the whole
-# score range. The original shape is hyperbolic, 1/(n+1), which decays so fast
-# that any term with two or more mentions cannot clear SignalRouter's 0.4
-# watchlist threshold at any confidence. See docs/ULTRA_PLAN.md Phase 2.1.
+# score range. The original shape was hyperbolic, 1/(n+1), which decays so fast
+# that any term with two or more mentions could not clear SignalRouter's 0.4
+# watchlist threshold at any confidence — the index was blind to the early,
+# thinly-covered signals it exists to find. See docs/ULTRA_PLAN.md Phase 2.1.
 #
-# Both shapes are implemented so the choice can be made against evidence
-# (tools/asymmetry_calibration.py) rather than by assertion. HYPERBOLIC remains
-# the default: changing it changes what the system would route, which is an
-# owner's decision, not a refactor.
+# Every shape is kept so the choice stays evidence-based
+# (tools/asymmetry_calibration.py) rather than asserted. The default is now
+# LogNovelty; see DEFAULT_NOVELTY below for why, and pass LEGACY_NOVELTY to
+# reproduce the old scores.
 
 
 class NoveltyModel:
@@ -76,12 +77,36 @@ class LogNovelty(NoveltyModel):
         return f"log(scale={self.scale:g})"
 
 
-#: The shape shipped today. Preserves existing behaviour exactly.
-DEFAULT_NOVELTY = HyperbolicNovelty(half_life=1.0)
+#: The original shape, kept for reproducing pre-2026-08 scores.
+LEGACY_NOVELTY = HyperbolicNovelty(half_life=1.0)
+
+#: The default, chosen 2026-08-28 from tools/asymmetry_calibration.py.
+#:
+#: Rationale, in the order it mattered:
+#:
+#: 1. Under the legacy hyperbolic shape a term with two or more mentions could
+#:    not reach the router's 0.4 watchlist threshold at any confidence. The
+#:    index exists to catch early, uncrowded signals, and it was blind to
+#:    exactly those: one to three mentions with a divergent crowd scored
+#:    `ignore`.
+#: 2. Slower shapes fix that, but `hyperbolic-8` routes a *single* bearish
+#:    headline straight to `trade` (0.6271 at 0.85 confidence). Auto-routing on
+#:    one uncorroborated story is the failure mode this system was reviewed
+#:    against; rejected outright.
+#: 3. `log-2` reaches watchlist at up to 19 mentions. Nineteen mentions is a
+#:    crowded story, not an early one, and putting those on the watchlist
+#:    dilutes it into a news feed.
+#: 4. `log` reaches watchlist at up to 3 mentions and never reaches `trade`
+#:    from a thin story. Logarithmic decay is also the principled shape for an
+#:    attention variable; the hyperbolic form was algebraic convenience.
+#:
+#: Thresholds were deliberately left at 0.6/0.4. Changing shape and thresholds
+#: together would make the effect unattributable.
+DEFAULT_NOVELTY = LogNovelty(scale=1.0)
 
 #: Named shapes for the calibration tool and for configuration.
 NOVELTY_MODELS: Dict[str, NoveltyModel] = {
-    "hyperbolic": DEFAULT_NOVELTY,
+    "hyperbolic": LEGACY_NOVELTY,
     "hyperbolic-3": HyperbolicNovelty(half_life=3.0),
     "hyperbolic-8": HyperbolicNovelty(half_life=8.0),
     "log": LogNovelty(scale=1.0),
@@ -134,8 +159,8 @@ class AsymmetryIndex:
         self.trend_sentiment_db = {}
         self.corpus = corpus
         self.analyzer = analyzer
-        # None means the shipped shape. Passing a model is an explicit opt-in to
-        # a different score range, and therefore to different routing.
+        # None means the shipped default (LogNovelty). Pass LEGACY_NOVELTY to
+        # reproduce pre-2026-08 scores exactly.
         self.novelty_model = novelty_model or DEFAULT_NOVELTY
 
     def _hash_signal(self, text):

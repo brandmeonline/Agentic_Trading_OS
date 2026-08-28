@@ -1,6 +1,6 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 93% complete on a corrected basis (see Completion tracking). Phases 1–5 and 7 landed; Phase 6 partially landed and blocked on a data-source decision.
+**Status:** 93% complete on a corrected basis (see Completion tracking). Phases 1–5 and 7 landed; both open decisions resolved 2026-08-28; Phase 6's remaining 7% is a scoped spike.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -81,7 +81,7 @@ measurement. This phase turns it into a measurement.
   higher than a saturated one, holding confidence fixed.
 - Without a corpus, output is byte-identical to the current implementation.
 
-## Phase 2.1 — Asymmetry calibration (P1b) — LANDED (decision open)
+## Phase 2.1 — Asymmetry calibration (P1b) — LANDED (decided 2026-08-28)
 
 Attaching real measurement in Phase 2 exposed a pre-existing calibration defect
 in the score's shape. It is not caused by the corpus — the same ceiling applies
@@ -152,10 +152,35 @@ bearish mentions — which under the shipped shape still lands in `ignore`.
 | hyperbolic-8 | 12 |
 | log-2 | 19 |
 
-> Deliberately not decided in-cycle: selecting a different shape, or moving the
-> router's 0.6/0.4 thresholds, changes what the system would trade. Run
-> `python tools/asymmetry_calibration.py` and pick. Until then the shipped
-> default stands and nothing about routing has changed.
+### The decision — `LogNovelty(scale=1.0)`, taken 2026-08-28
+
+Reasoning, in the order it mattered:
+
+1. The legacy shape left the index **blind to its own thesis**: a term with one
+   to three mentions and a divergent crowd — precisely the early, uncrowded
+   signal the index exists to find — scored `ignore`.
+2. `hyperbolic-8` fixes reachability but routes a **single bearish headline
+   straight to `trade`** (0.6271 at 0.85 confidence). Acting on one
+   uncorroborated story is the exact failure mode this whole review criticised
+   in the reference architecture. Rejected outright.
+3. `log-2` reaches watchlist at up to **19 mentions**. Nineteen mentions is a
+   crowded story, not an early one; that turns the watchlist into a news feed.
+4. `log` reaches watchlist at up to 3 mentions and cannot reach `trade` from a
+   thin story. Logarithmic decay is also the principled shape for an attention
+   variable — the hyperbolic form was algebraic convenience.
+
+**Thresholds left at 0.6 / 0.4.** Changing shape and thresholds together would
+make the effect unattributable.
+
+**Added with it: a corroboration gate.** A *measured* signal now needs
+`SignalRouter.MIN_SOURCES_TO_TRADE` (2) distinct sources before it can route to
+`trade`; one that clears the score on a single source is demoted to watchlist
+with the reason attached. Tracking source breadth in Phase 5 was pointless if
+the router could not refuse to act on one outlet's opinion. Unmeasured signals
+are ungated — they have no source count to judge.
+
+`LEGACY_NOVELTY` is retained so pre-2026-08 scores stay reproducible; the
+module's worked example still returns 0.1607 under it.
 
 ## Phase 3 — Safety and liveness fixes (P2) — LANDED
 
@@ -342,7 +367,7 @@ progress reflects work delivered rather than boxes ticked.
 | --- | ---: | --- |
 | 1 — Ingestion layer | 22% | landed |
 | 2 — Measured asymmetry | 9% | landed |
-| 2.1 — Asymmetry calibration | 5% | landed |
+| 2.1 — Asymmetry calibration | 5% | landed, decided |
 | 3 — Safety and liveness | 9% | landed |
 | 4 — Report layer | 13% | landed |
 | 5 — Event-driven alerts | 13% | landed |

@@ -4,14 +4,16 @@
 Run:  python tools/asymmetry_calibration.py
 
 Answers one question with evidence instead of assertion: under each novelty
-shape, what would SignalRouter actually route? The shipped shape is hyperbolic
-with half_life 1 — the original ``1 / (n + 1)`` — under which any term with two
-or more mentions cannot clear the 0.4 watchlist threshold at any confidence.
+shape, what would SignalRouter actually route?
+
+The shape was chosen on 2026-08-28 using this tool. ``log`` is now the default;
+``hyperbolic`` (the original ``1 / (n + 1)``) is retained as LEGACY_NOVELTY,
+under which any term with two or more mentions could not clear the 0.4
+watchlist threshold at any confidence.
 
 This tool does not change anything. It prints the reachability ceiling per
-shape and, on a fixture corpus, what each shape would decide. The choice of
-shape (or of thresholds) changes what the system would trade and is the
-owner's call; see docs/ULTRA_PLAN.md Phase 2.1.
+shape and, on a fixture corpus, what each shape would decide. Re-run it before
+revisiting the choice; see docs/ULTRA_PLAN.md Phase 2.1.
 """
 from __future__ import annotations
 
@@ -177,9 +179,10 @@ def main() -> int:
         return 1
     print("PASS: ordering property holds under every shape")
     print()
-    print("Shipped default is unchanged (hyperbolic, half_life=1). Selecting a")
-    print("different shape, or moving the router thresholds, changes what the")
-    print("system would trade — see docs/ULTRA_PLAN.md Phase 2.1.")
+    print("Shipped default is 'log' (chosen 2026-08-28). 'hyperbolic' is the")
+    print("legacy shape, retained so historical scores stay reproducible.")
+    print("Router thresholds are unchanged at 0.6 / 0.4, and a measured signal")
+    print("additionally needs 2+ sources to trade — see docs/ULTRA_PLAN.md 2.1.")
     return 0
 
 

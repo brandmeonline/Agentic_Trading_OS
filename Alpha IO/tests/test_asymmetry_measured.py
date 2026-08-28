@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.asymmetry_index import (
+    LEGACY_NOVELTY,
     NOVELTY_MODELS,
     AsymmetryIndex,
     HyperbolicNovelty,
@@ -53,14 +54,23 @@ def item(title, source_name="wire"):
     )
 
 
-class TestBackwardCompatibility(unittest.TestCase):
-    def test_literal_path_is_unchanged(self):
-        index = AsymmetryIndex()
-        # Values from the module's own worked example.
-        self.assertEqual(
-            index.compute_asymmetry("Bullish activity on ADA rising in LATAM", 0.82, 0.3, 4, 0.4),
-            0.1607,
-        )
+EXAMPLE = ("Bullish activity on ADA rising in LATAM", 0.82, 0.3, 4, 0.4)
+
+
+class TestLegacyReproducibility(unittest.TestCase):
+    """The old shape is retained so historical scores stay reproducible."""
+
+    def test_legacy_shape_reproduces_the_original_score(self):
+        index = AsymmetryIndex(novelty_model=LEGACY_NOVELTY)
+        self.assertEqual(index.compute_asymmetry(*EXAMPLE), 0.1607)
+
+    def test_default_scores_higher_than_legacy_at_the_same_inputs(self):
+        # The point of the 2026-08-28 change: coverage no longer collapses
+        # the score. Same inputs, a usable number instead of a crushed one.
+        legacy = AsymmetryIndex(novelty_model=LEGACY_NOVELTY).compute_asymmetry(*EXAMPLE)
+        default = AsymmetryIndex().compute_asymmetry(*EXAMPLE)
+        self.assertEqual(default, 0.308)
+        self.assertGreater(default, legacy)
 
     def test_measured_without_corpus_falls_back_to_supplied_values(self):
         index = AsymmetryIndex()
@@ -70,7 +80,7 @@ class TestBackwardCompatibility(unittest.TestCase):
         )
         self.assertIsInstance(result, MeasuredAsymmetry)
         self.assertFalse(result.measured)
-        self.assertEqual(result.score, 0.1607)
+        self.assertEqual(result.score, 0.308)
 
     def test_record_signal_still_tracks_hashes(self):
         index = AsymmetryIndex()
@@ -182,12 +192,17 @@ class TestSafeTickerParsing(unittest.TestCase):
 class TestNoveltyModels(unittest.TestCase):
     """Phase 2.1: the score shape is configurable; the default is unchanged."""
 
-    def test_default_is_the_original_shape(self):
+    def test_default_is_log(self):
+        # Decided 2026-08-28 from tools/asymmetry_calibration.py.
         index = AsymmetryIndex()
-        self.assertIsInstance(index.novelty_model, HyperbolicNovelty)
-        self.assertEqual(index.novelty_model.half_life, 1.0)
+        self.assertIsInstance(index.novelty_model, LogNovelty)
+        self.assertEqual(index.novelty_model.scale, 1.0)
+
+    def test_legacy_is_still_the_original_shape(self):
+        self.assertIsInstance(LEGACY_NOVELTY, HyperbolicNovelty)
+        self.assertEqual(LEGACY_NOVELTY.half_life, 1.0)
         for n in (0, 1, 2, 5, 10):
-            self.assertAlmostEqual(index.novelty_model(n), 1.0 / (n + 1))
+            self.assertAlmostEqual(LEGACY_NOVELTY(n), 1.0 / (n + 1))
 
     def test_hyperbolic_half_life_is_where_novelty_halves(self):
         model = HyperbolicNovelty(half_life=8.0)
@@ -221,13 +236,18 @@ class TestNoveltyModels(unittest.TestCase):
                 quiet = index.compute_measured("AMD", 0.85, term="AMD").score
                 self.assertGreater(quiet, crowded)
 
-    def test_swapping_the_shape_raises_the_reachable_ceiling(self):
-        # The defect Phase 2.1 documents: at the shipped shape, two mentions
-        # cannot reach the router's watchlist threshold at any confidence.
-        shipped = AsymmetryIndex()
-        self.assertLess(shipped.compute_asymmetry("x", 1.0, 0.0, 2, 0.0), 0.4)
-        slower = AsymmetryIndex(novelty_model=NOVELTY_MODELS["hyperbolic-8"])
-        self.assertGreater(slower.compute_asymmetry("x", 1.0, 0.0, 2, 0.0), 0.4)
+    def test_the_default_fixed_the_reachability_defect(self):
+        # The defect Phase 2.1 documented: under the legacy shape two mentions
+        # could not reach the router's 0.4 watchlist threshold at any
+        # confidence. The current default can.
+        legacy = AsymmetryIndex(novelty_model=LEGACY_NOVELTY)
+        self.assertLess(legacy.compute_asymmetry("x", 1.0, 0.0, 2, 0.0), 0.4)
+        self.assertGreater(AsymmetryIndex().compute_asymmetry("x", 1.0, 0.0, 2, 0.0), 0.4)
+
+    def test_default_still_ignores_a_saturated_story(self):
+        # Fixing reachability must not make the index credulous about crowds.
+        index = AsymmetryIndex()
+        self.assertLess(index.compute_asymmetry("x", 0.85, 0.85, 25, 0.0), 0.4)
 
 
 class TestPolarityDamping(unittest.TestCase):
@@ -277,6 +297,61 @@ class TestRouterReachability(unittest.TestCase):
             corpus.add(item(f"NVDA surges to a record high on strong growth {n}"))
         router = SignalRouter(corpus=corpus)
         self.assertEqual(router.route("NVDA setup", confidence=0.95, term="NVDA")["decision"], "ignore")
+
+
+class TestCorroborationGate(unittest.TestCase):
+    """A measured signal needs more than one outlet before it can trade."""
+
+    def build(self, sources, mentions=1, crowd_texts=None):
+        corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)
+        for n in range(mentions):
+            corpus.add(item(f"ZZZZ plunges on a lawsuit probe and weak guidance {n}",
+                            source_name=f"wire-{n % max(sources, 1)}"))
+        return SignalRouter(corpus=corpus)
+
+    def test_single_source_signal_is_demoted_not_traded(self):
+        router = self.build(sources=1, mentions=1)
+        # Force the score above the trade threshold so the gate is what decides.
+        router.asymmetry_threshold = 0.0
+        result = router.route("ZZZZ setup", confidence=0.95, term="ZZZZ")
+
+        self.assertEqual(result["asymmetry"]["sources"], 1)
+        self.assertEqual(result["decision"], "watchlist")
+        self.assertIn("needs 2", result["note"])
+
+    def test_corroborated_signal_can_trade(self):
+        router = self.build(sources=2, mentions=2)
+        router.asymmetry_threshold = 0.0
+        result = router.route("ZZZZ setup", confidence=0.95, term="ZZZZ")
+
+        self.assertGreaterEqual(result["asymmetry"]["sources"], 2)
+        self.assertEqual(result["decision"], "trade")
+        self.assertIn("execution", result)
+
+    def test_unmeasured_signals_are_not_gated(self):
+        # No corpus means no source count to judge; the caller took that risk.
+        router = SignalRouter(asymmetry_threshold=0.0)
+        result = router.route("anything", confidence=0.95, sentiment=0.0, news_mentions=0)
+        self.assertFalse(result["asymmetry"]["measured"])
+        self.assertEqual(result["decision"], "trade")
+
+    def test_threshold_is_configurable(self):
+        router = self.build(sources=1, mentions=1)
+        router.asymmetry_threshold = 0.0
+        router.min_sources_to_trade = 1
+        self.assertEqual(router.route("ZZZZ setup", confidence=0.95, term="ZZZZ")["decision"], "trade")
+
+    def test_gate_does_not_promote_a_low_score(self):
+        # Corroboration is a veto, never a boost.
+        corpus = NewsCorpus(window_hours=24, clock=lambda: NOW)
+        for n in range(25):
+            corpus.add(item(f"NVDA surges to a record on strong growth {n}",
+                            source_name=f"wire-{n % 5}"))
+        router = SignalRouter(corpus=corpus)
+        result = router.route("NVDA setup", confidence=0.95, term="NVDA")
+        self.assertGreaterEqual(result["asymmetry"]["sources"], 2)
+        self.assertEqual(result["decision"], "ignore")
+
 
 if __name__ == "__main__":
     unittest.main()
