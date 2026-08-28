@@ -1,6 +1,6 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 80% complete. Phases 1–5 landed; Phase 6 open.
+**Status:** 92% complete. Phases 1–5 landed; Phase 6 partially landed and blocked on a data-source decision.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -221,7 +221,7 @@ currently spent entirely on price thresholds.
 - A corpus event fires exactly one notification per alert per dedupe window.
 - Existing price alerts are unaffected.
 
-## Phase 6 — Dashboard consolidation (P5) — OPEN
+## Phase 6 — Dashboard consolidation (P5) — PARTIALLY LANDED (blocked)
 
 **Ships:** changes to `web/`, retirement of `dashboard/`
 
@@ -239,6 +239,41 @@ currently spent entirely on price thresholds.
 - One dashboard, authenticated, with no synthetic data paths in any live panel.
 - Playwright interactive verification per the existing `PLAN.md` convention.
 
+### What landed
+
+- **The Streamlit demo is retired.** Moved to `examples/streamlit_demo/` with a
+  README stating plainly that `app.py` reads a file the system does not produce
+  and `live_stream.py` fabricates three signals on a ten-second loop. The three
+  docs that told people to run it now point at `run_web.py`.
+- **`/terminal`** — a market view on the Flask app, behind the same auth as
+  every other page: watchlist grid with live coverage per symbol, a news tape
+  off the ingestion corpus, uncrowded candidates scored through the measured
+  asymmetry path, and the latest morning brief.
+- **`core.news_feed.get_news_service()`** — a process-wide service mirroring
+  `get_alert_manager()`, so the web layer and the scheduler read one corpus
+  rather than two.
+- Every panel reports its backing source as unavailable rather than rendering
+  a plausible-looking zero.
+
+### Blocked — needs one decision from the owner
+
+Three panels from the original terminal comparison cannot be built against any
+data source this repo has:
+
+| Panel | Needs |
+| --- | --- |
+| Sector heatmap | GICS (or equivalent) sector membership for the equity universe |
+| Market breadth | Advance/decline and new-high/new-low across a broad universe |
+| Cross-asset strip (DXY, TNX, VIX, OIL) | FX, rates, volatility and commodity quotes |
+
+Alpaca covers equity and crypto bars, and nothing in the tree covers the rest.
+All three collapse to a single question: **which market-data provider, and is
+there a budget for a paid tier?** Free options (Stooq, FRED for rates, Yahoo
+endpoints) cover parts of it with delayed data and no redistribution rights;
+paid options (Polygon, Tiingo, Databento) cover all of it. Until that is
+answered these panels would have to be faked, and a terminal panel showing
+invented breadth is worse than no panel.
+
 ---
 
 ## Completion tracking
@@ -254,9 +289,9 @@ progress reflects work delivered rather than boxes ticked.
 | 3 — Safety and liveness | 10% | landed |
 | 4 — Report layer | 15% | landed |
 | 5 — Event-driven alerts | 15% | landed |
-| 6 — Dashboard consolidation | 20% | open |
+| 6 — Dashboard consolidation | 20% | 12% landed, 8% blocked |
 
-**Complete: 80%.**
+**Complete: 92%.** The remaining 8% is blocked, not outstanding — see Phase 6.
 
 ## Sequencing
 

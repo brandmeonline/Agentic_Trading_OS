@@ -16,7 +16,7 @@ Quick Start
 pip install -r requirements.txt
 cp .env.template .env  # Fill in your API keys
 python tests/backtest.py  # Run a simulation
-streamlit run dashboard/app.py  # Visual dashboard
+python run_web.py  # Dashboard + terminal at /terminal
 Key Modules
 core/agent.py: Reinforcement learner
 core/risk.py: Trade risk and exposure management

@@ -1032,6 +1032,110 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # Routes - Alerts
     # ==========================================================================
 
+    # ==========================================================================
+    # Terminal (market view) — Phase 6 of docs/ULTRA_PLAN.md
+    # ==========================================================================
+
+    def _corpus():
+        """The process-wide ingestion corpus, or None when unavailable."""
+        try:
+            from core.news_feed import get_news_service
+            return get_news_service().corpus
+        except Exception:
+            return None
+
+    @app.route("/terminal")
+    @login_required
+    def terminal():
+        """Market view: watchlist, news tape, and uncrowded candidates."""
+        return render_template("terminal.html", stats=trading_state.get_stats())
+
+    @app.route("/api/terminal/news")
+    @login_required
+    def api_terminal_news():
+        """Recent ingested documents, newest first."""
+        corpus = _corpus()
+        if corpus is None:
+            return jsonify({"available": False, "items": [], "reason": "ingestion layer unavailable"})
+
+        try:
+            limit = max(1, min(int(request.args.get("limit", 40)), 200))
+        except (TypeError, ValueError):
+            limit = 40
+
+        items = corpus.recent()
+        items.sort(key=lambda item: item.published, reverse=True)
+        return jsonify({
+            "available": True,
+            "items": [item.to_dict() for item in items[:limit]],
+            "stats": corpus.stats(),
+        })
+
+    @app.route("/api/terminal/candidates")
+    @login_required
+    def api_terminal_candidates():
+        """Uncrowded terms ranked by measured asymmetry."""
+        corpus = _corpus()
+        if corpus is None:
+            return jsonify({"available": False, "candidates": []})
+
+        try:
+            from core.reports import BriefGenerator
+            brief = BriefGenerator(corpus=corpus).generate()
+            return jsonify({
+                "available": True,
+                "candidates": [c.to_dict() for c in brief.candidates],
+                "digest": [d.to_dict() for d in brief.digest],
+            })
+        except Exception:
+            app.logger.exception("terminal candidates failed")
+            return jsonify({"available": False, "candidates": []}), 500
+
+    @app.route("/api/terminal/watchlist")
+    @login_required
+    def api_terminal_watchlist():
+        """Watchlist symbols with last price and current coverage."""
+        corpus = _corpus()
+        # The watchlist is whatever the operator configured; failing that, the
+        # symbols the running system is actually pricing.
+        configured = user_settings.get("trading", {}).get("watchlist")
+        symbols = configured if configured else sorted(trading_state.prices.keys())
+
+        rows = []
+        for symbol in symbols[:16]:
+            row = {"symbol": symbol, "price": trading_state.prices.get(symbol)}
+            if corpus is not None:
+                base = symbol.split("/")[0].split("-")[0].upper()
+                stats = corpus.crowding(base)
+                row.update({
+                    "mentions": stats.mentions,
+                    "sources": stats.sources,
+                    "crowd_sentiment": round(stats.crowd_sentiment, 4),
+                })
+            rows.append(row)
+
+        return jsonify({"symbols": rows, "coverage_available": corpus is not None})
+
+    @app.route("/api/terminal/brief")
+    @login_required
+    def api_terminal_brief():
+        """The most recent morning brief on disk, if one has been generated."""
+        from pathlib import Path as _Path
+        directory = _Path(os.environ.get("ALPHAIO_REPORT_DIR", "data/reports"))
+        if not directory.is_dir():
+            return jsonify({"available": False, "reason": "no briefs generated yet"})
+
+        briefs = sorted(directory.glob("macro-*.md"))
+        if not briefs:
+            return jsonify({"available": False, "reason": "no briefs generated yet"})
+
+        latest = briefs[-1]
+        return jsonify({
+            "available": True,
+            "name": latest.name,
+            "markdown": latest.read_text(encoding="utf-8"),
+        })
+
     @app.route("/alerts")
     @login_required
     def alerts():

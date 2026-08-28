@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block page_title %}Terminal{% endblock %}
+
+{% block content %}
+<div class="terminal-grid">
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Watchlist</h2>
+            <span class="badge" id="watchlist-badge">—</span>
+        </div>
+        <div class="card-body">
+            <div class="watchlist-grid" id="watchlist-grid">
+                <p class="text-muted">Loading…</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Uncrowded candidates</h2>
+            <span class="badge" id="candidates-badge">—</span>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small">
+                Ranked by measured asymmetry &mdash; confidence against coverage.
+                A candidate is a question, not a position.
+            </p>
+            <div id="candidates-list">
+                <p class="text-muted">Loading…</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card terminal-tape">
+        <div class="card-header">
+            <h2>News tape</h2>
+            <span class="badge" id="tape-badge">—</span>
+        </div>
+        <div class="card-body">
+            <div class="news-tape" id="news-tape">
+                <p class="text-muted">Loading…</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Latest brief</h2>
+            <span class="badge" id="brief-badge">—</span>
+        </div>
+        <div class="card-body">
+            <pre class="brief-body" id="brief-body">Loading…</pre>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    function leanClass(crowd) {
+        if (crowd == null) return '';
+        if (crowd >= 0.65) return 'positive';
+        if (crowd <= 0.35) return 'negative';
+        return '';
+    }
+
+    function relativeTime(iso) {
+        const then = new Date(iso);
+        if (isNaN(then)) return '';
+        const minutes = Math.round((Date.now() - then.getTime()) / 60000);
+        if (minutes < 1) return 'now';
+        if (minutes < 60) return minutes + 'm';
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return hours + 'h';
+        return Math.round(hours / 24) + 'd';
+    }
+
+    function loadWatchlist() {
+        fetch('/api/terminal/watchlist')
+            .then(r => r.json())
+            .then(data => {
+                const grid = document.getElementById('watchlist-grid');
+                const badge = document.getElementById('watchlist-badge');
+                const rows = data.symbols || [];
+
+                if (!rows.length) {
+                    grid.innerHTML = '<p class="text-muted">No symbols priced yet. Start the system to populate the watchlist.</p>';
+                    badge.textContent = 'empty';
+                    return;
+                }
+
+                badge.textContent = rows.length + ' symbols';
+                grid.innerHTML = rows.map(row => `
+                    <div class="watch-cell">
+                        <span class="watch-symbol">${escapeHtml(row.symbol)}</span>
+                        <span class="watch-price">${row.price == null ? '—' : Number(row.price).toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
+                        <span class="watch-coverage ${leanClass(row.crowd_sentiment)}">
+                            ${row.mentions == null ? 'no coverage data' : escapeHtml(row.mentions) + ' mentions · ' + escapeHtml(row.sources) + ' src'}
+                        </span>
+                    </div>
+                `).join('');
+            })
+            .catch(() => {
+                document.getElementById('watchlist-badge').textContent = 'error';
+            });
+    }
+
+    function loadTape() {
+        fetch('/api/terminal/news')
+            .then(r => r.json())
+            .then(data => {
+                const tape = document.getElementById('news-tape');
+                const badge = document.getElementById('tape-badge');
+
+                if (!data.available) {
+                    badge.textContent = 'unavailable';
+                    tape.innerHTML = '<p class="text-muted">Ingestion layer not running. Start the feed service to populate the tape.</p>';
+                    return;
+                }
+                const items = data.items || [];
+                if (!items.length) {
+                    badge.textContent = 'empty';
+                    tape.innerHTML = '<p class="text-muted">No documents in the window yet.</p>';
+                    return;
+                }
+
+                badge.textContent = items.length + ' in window';
+                tape.innerHTML = items.map(item => `
+                    <div class="tape-row">
+                        <span class="tape-time">${escapeHtml(relativeTime(item.published))}</span>
+                        <span class="tape-source">${escapeHtml(item.source)}</span>
+                        <span class="tape-title">${escapeHtml(item.title)}</span>
+                        <span class="tape-entities">${(item.entities || []).map(escapeHtml).join(' ')}</span>
+                    </div>
+                `).join('');
+            })
+            .catch(() => {
+                document.getElementById('tape-badge').textContent = 'error';
+            });
+    }
+
+    function loadCandidates() {
+        fetch('/api/terminal/candidates')
+            .then(r => r.json())
+            .then(data => {
+                const list = document.getElementById('candidates-list');
+                const badge = document.getElementById('candidates-badge');
+
+                if (!data.available) {
+                    badge.textContent = 'unavailable';
+                    list.innerHTML = '<p class="text-muted">Ingestion layer not running.</p>';
+                    return;
+                }
+                const candidates = data.candidates || [];
+                if (!candidates.length) {
+                    badge.textContent = 'none';
+                    list.innerHTML = '<p class="text-muted">Nothing uncrowded enough to flag.</p>';
+                    return;
+                }
+
+                badge.textContent = candidates.length;
+                list.innerHTML = candidates.map(c => `
+                    <div class="candidate-row">
+                        <span class="candidate-term">${escapeHtml(c.term)}</span>
+                        <span class="candidate-score">${Number(c.score).toFixed(4)}</span>
+                        <span class="candidate-detail ${leanClass(c.crowd_sentiment)}">
+                            ${escapeHtml(c.mentions)} mentions · ${escapeHtml(c.sources)} src · crowd ${Number(c.crowd_sentiment).toFixed(2)}
+                        </span>
+                    </div>
+                `).join('');
+            })
+            .catch(() => {
+                document.getElementById('candidates-badge').textContent = 'error';
+            });
+    }
+
+    function loadBrief() {
+        fetch('/api/terminal/brief')
+            .then(r => r.json())
+            .then(data => {
+                const body = document.getElementById('brief-body');
+                const badge = document.getElementById('brief-badge');
+                if (!data.available) {
+                    badge.textContent = 'none';
+                    body.textContent = data.reason || 'No brief available.';
+                    return;
+                }
+                badge.textContent = data.name;
+                body.textContent = data.markdown;
+            })
+            .catch(() => {
+                document.getElementById('brief-badge').textContent = 'error';
+            });
+    }
+
+    function refresh() {
+        loadWatchlist();
+        loadTape();
+        loadCandidates();
+    }
+
+    refresh();
+    loadBrief();
+    setInterval(refresh, 30000);
+</script>
+{% endblock %}

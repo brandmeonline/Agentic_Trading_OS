@@ -866,3 +866,32 @@ class NewsFeedService:
             "last_sweep": self.last_stats.to_dict(),
             "corpus": self.corpus.stats(),
         }
+
+
+# =============================================================================
+# Process-wide service
+# =============================================================================
+
+_global_service: Optional["NewsFeedService"] = None
+_global_lock = threading.Lock()
+
+
+def get_news_service() -> "NewsFeedService":
+    """Get or create the process-wide feed service.
+
+    Mirrors ``core.alerts.get_alert_manager``. The web layer and the scheduler
+    must read the same corpus, or the terminal shows one thing and the alerts
+    fire on another.
+    """
+    global _global_service
+    with _global_lock:
+        if _global_service is None:
+            _global_service = NewsFeedService()
+        return _global_service
+
+
+def set_news_service(service: Optional["NewsFeedService"]) -> None:
+    """Replace the process-wide service. For tests and for explicit wiring."""
+    global _global_service
+    with _global_lock:
+        _global_service = service
