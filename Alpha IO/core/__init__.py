@@ -71,6 +71,21 @@ except ImportError:
     Interval = None
 
 try:
+    from core.pipeline import TradingPipeline, PipelineMode
+    __all__.extend(["TradingPipeline", "PipelineMode"])
+except ImportError:
+    TradingPipeline = None
+    PipelineMode = None
+
+try:
+    from core.signal_eval import SignalEvaluator, EdgeReport, Verdict
+    __all__.extend(["SignalEvaluator", "EdgeReport", "Verdict"])
+except ImportError:
+    SignalEvaluator = None
+    EdgeReport = None
+    Verdict = None
+
+try:
     from core.services import (
         BackgroundServices, ServiceConfig, start_background_services,
         stop_background_services, get_background_services,

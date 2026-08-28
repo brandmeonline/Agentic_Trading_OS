@@ -1,6 +1,11 @@
 # ULTRA PLAN — Closing the Terminal Gap
 
-**Status:** 93% complete on a corrected basis (see Completion tracking). Phases 1–5 and 7 landed; both open decisions resolved 2026-08-28; Phase 6's remaining 7% is a scoped spike.
+**Status:** 94% complete. Phases 1–5, 7 and 8 landed; both open decisions
+resolved 2026-08-28; Phase 6's remaining 6% is a scoped spike.
+
+> **The system can trade, and will not trade live without measured evidence.**
+> See Phase 8 for the three gates and for the honest status of the
+> "more accurate than a human" claim: it is currently unsupported.
 
 Derived from `docs/TERMINAL_GAP_ANALYSIS.md`. That review found Alpha IO owns the
 execution half of a trading terminal and has essentially none of the ingestion
@@ -348,6 +353,62 @@ one. Hence the corrected basis below.
 - A second `start()` does not launch a second loop against the same sources.
 - A raising collaborator does not break shutdown.
 
+## Phase 8 — Persistence, evaluation, and the trade loop (P7) — LANDED
+
+Three gaps that together separated "runs" from "operational".
+
+### Scope
+
+- **Corpus persistence** (`NewsCorpus(sqlite_path=...)`). The corpus was
+  in-memory only: every restart discarded the window and reset every mention
+  count to zero, which silently reset every asymmetry score with it. Now
+  SQLite-backed, matching the ledger's pattern. Deliberately *unlike* the
+  ledger in one respect: a corrupt corpus database degrades to empty and
+  records `load_error` rather than failing closed. The ledger is authoritative
+  and losing it silently would be a correctness failure; the corpus is a rolling
+  cache the next poll rebuilds, so refusing to start over a damaged cache trades
+  a recoverable problem for an outage.
+- **Signal evaluation** (`core/signal_eval.py`). Every number the system
+  produced was an *input* — asymmetry, crowd sentiment, mention counts — and
+  none had ever been checked against what prices subsequently did. This
+  measures hit rate and forward return against three mandatory baselines
+  (always-long, follow-the-crowd, coin-flip), reports a Wilson interval, and
+  returns a blunt verdict.
+- **The trade loop** (`core/pipeline.py`). corpus → candidates → router → risk →
+  execution → ledger, wired for the first time.
+
+### The three gates
+
+A signal reaches a live broker order only if all three open:
+
+1. **Mode** — `paper` by default; `live` must be set explicitly.
+2. **Evidence** — an `EdgeReport` with verdict `ESTABLISHED`. Requesting `live`
+   without one does not raise; it *downgrades to paper* and records
+   `NO_EDGE_EVIDENCE` on every decision. Failing loudly at startup would be
+   worse: an operator who set the flag would simply delete the check.
+3. **Risk** — `check_risk_limits` must pass and `calculate_position_size` must
+   return a size. A signal never chooses its own.
+
+### Pass criteria
+
+- No verdict is issued below `MIN_SAMPLES` (100), however good the numbers look.
+- A signal that merely matches a baseline reports `NO_EDGE`, not an edge.
+- `live` without an established edge cannot produce a live order — asserted.
+- The corpus survives a restart and dedupes across it.
+
+### Honest status of the accuracy claim
+
+**The signal has no demonstrated edge.** Not a poor one — an *unmeasured* one.
+The evaluator exists, the baselines exist, the gate exists, and no evaluation
+has been run against real price history because that requires the market-data
+work in Phase 6 plus enough elapsed time to accumulate 100+ signals with
+resolved outcomes.
+
+Until that runs and returns `ESTABLISHED`, the system is a paper-trading
+research instrument. Any claim that its signals beat a human is unsupported by
+anything in this repository, and the code is written so that such a claim
+cannot be acted upon by accident.
+
 ## Completion tracking
 
 Percentages are weighted by scope, not by phase count, so a cycle's reported
@@ -365,16 +426,18 @@ progress reflects work delivered rather than boxes ticked.
 
 | Phase | Weight | State |
 | --- | ---: | --- |
-| 1 — Ingestion layer | 22% | landed |
-| 2 — Measured asymmetry | 9% | landed |
-| 2.1 — Asymmetry calibration | 5% | landed, decided |
-| 3 — Safety and liveness | 9% | landed |
-| 4 — Report layer | 13% | landed |
-| 5 — Event-driven alerts | 13% | landed |
-| 6 — Dashboard consolidation | 18% | 11% landed, 7% blocked |
-| 7 — Runtime wiring | 11% | landed |
+| 1 — Ingestion layer | 20% | landed |
+| 2 — Measured asymmetry | 8% | landed |
+| 2.1 — Asymmetry calibration | 4% | landed, decided |
+| 3 — Safety and liveness | 8% | landed |
+| 4 — Report layer | 11% | landed |
+| 5 — Event-driven alerts | 11% | landed |
+| 6 — Dashboard consolidation | 16% | 10% landed, 6% pending a spike |
+| 7 — Runtime wiring | 10% | landed |
+| 8 — Persistence, evaluation, trade loop | 12% | landed |
 
-**Complete: 93%.** The remaining 7% is blocked, not outstanding — see Phase 6.
+**Complete: 94%.** The remaining 6% is the Phase 6 spike. Weights were
+renormalised again when Phase 8 was added; see the note above.
 
 ## Sequencing
 

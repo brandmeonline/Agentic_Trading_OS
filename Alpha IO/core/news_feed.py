@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import re
 import socket
+import sqlite3
 import ssl
 import threading
 import time
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 USER_AGENT = "AgenticTradingOS/1.0 (+https://github.com/brandmeonline/Agentic_Trading_OS)"
@@ -526,6 +528,7 @@ class NewsCorpus:
         window_hours: float = 24.0,
         max_items: int = 20000,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        sqlite_path: Optional[str] = None,
     ) -> None:
         if window_hours <= 0:
             raise ValueError("window_hours must be > 0")
@@ -536,6 +539,114 @@ class NewsCorpus:
         self._items: Deque[NewsItem] = deque()
         self._seen: Dict[str, datetime] = {}
         self._lock = threading.RLock()
+        self.sqlite_path = Path(sqlite_path) if sqlite_path else None
+        self.load_error: Optional[str] = None
+
+        if self.sqlite_path:
+            self._restore()
+
+    # -- persistence -------------------------------------------------------
+    #
+    # Unlike the ledger, a corrupt corpus database does NOT fail closed. The
+    # ledger is authoritative — losing it silently would be a correctness
+    # failure. The corpus is a rolling cache of public documents that the next
+    # poll reconstructs, so refusing to start over a damaged cache would trade a
+    # recoverable problem for an outage. The error is recorded on ``load_error``
+    # and surfaced through ``stats()`` instead.
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS news_items (
+            item_id     TEXT PRIMARY KEY,
+            title       TEXT NOT NULL,
+            summary     TEXT NOT NULL,
+            url         TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            category    TEXT NOT NULL,
+            credibility REAL NOT NULL,
+            published   TEXT NOT NULL,
+            fetched     TEXT NOT NULL,
+            entities    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_news_published ON news_items (published);
+    """
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.sqlite_path))
+        conn.row_factory = sqlite3.Row
+        conn.executescript(self._SCHEMA)
+        return conn
+
+    def _restore(self) -> None:
+        """Load in-window documents from disk. Never raises."""
+        try:
+            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            cutoff = (self._clock() - self.window).isoformat()
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM news_items WHERE published >= ? "
+                    "ORDER BY published ASC LIMIT ?",
+                    (cutoff, self.max_items),
+                ).fetchall()
+            for row in rows:
+                item = self._row_to_item(row)
+                if item is not None:
+                    self._items.append(item)
+                    self._seen[item.item_id] = item.published
+        except (sqlite3.DatabaseError, OSError, ValueError) as exc:
+            self.load_error = f"{type(exc).__name__}: {exc}"
+            self._items.clear()
+            self._seen.clear()
+
+    @staticmethod
+    def _row_to_item(row) -> Optional[NewsItem]:
+        try:
+            return NewsItem(
+                item_id=row["item_id"],
+                title=row["title"],
+                summary=row["summary"],
+                url=row["url"],
+                source=row["source"],
+                category=SourceCategory(row["category"]),
+                credibility=float(row["credibility"]),
+                published=datetime.fromisoformat(row["published"]),
+                fetched=datetime.fromisoformat(row["fetched"]),
+                entities=[e for e in (row["entities"] or "").split(",") if e],
+            )
+        except (ValueError, KeyError, TypeError):
+            # One unreadable row must not discard the rest of the window.
+            return None
+
+    def _persist(self, items: Iterable[NewsItem]) -> None:
+        if self.sqlite_path is None:
+            return
+        payload = [
+            (
+                item.item_id, item.title, item.summary, item.url, item.source,
+                item.category.value, item.credibility,
+                item.published.isoformat(), item.fetched.isoformat(),
+                ",".join(item.entities),
+            )
+            for item in items
+        ]
+        if not payload:
+            return
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO news_items VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    payload,
+                )
+        except (sqlite3.DatabaseError, OSError) as exc:
+            self.load_error = f"persist failed: {type(exc).__name__}: {exc}"
+
+    def _persist_purge(self, cutoff: datetime) -> None:
+        if self.sqlite_path is None:
+            return
+        try:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM news_items WHERE published < ?", (cutoff.isoformat(),))
+        except (sqlite3.DatabaseError, OSError) as exc:
+            self.load_error = f"purge failed: {type(exc).__name__}: {exc}"
 
     def __len__(self) -> int:
         with self._lock:
@@ -551,11 +662,24 @@ class NewsCorpus:
             if len(self._items) > self.max_items:
                 evicted = self._items.popleft()
                 self._seen.pop(evicted.item_id, None)
-            return True
+        self._persist([item])
+        return True
 
     def extend(self, items: Iterable[NewsItem]) -> int:
-        """Add many. Returns the count actually stored."""
-        return sum(1 for item in items if self.add(item))
+        """Add many, persisting in one transaction rather than one per item."""
+        stored = []
+        with self._lock:
+            for item in items:
+                if item.item_id in self._seen:
+                    continue
+                self._seen[item.item_id] = item.published
+                self._items.append(item)
+                if len(self._items) > self.max_items:
+                    evicted = self._items.popleft()
+                    self._seen.pop(evicted.item_id, None)
+                stored.append(item)
+        self._persist(stored)
+        return len(stored)
 
     def purge(self, now: Optional[datetime] = None) -> int:
         """Drop documents older than the window. Returns the count removed."""
@@ -567,6 +691,7 @@ class NewsCorpus:
                 evicted = self._items.popleft()
                 self._seen.pop(evicted.item_id, None)
                 removed += 1
+        self._persist_purge(cutoff)
         return removed
 
     def recent(self, now: Optional[datetime] = None) -> List[NewsItem]:
@@ -672,6 +797,9 @@ class NewsCorpus:
             "window_hours": self.window_hours,
             "oldest": items[0].published.isoformat() if items else None,
             "newest": items[-1].published.isoformat() if items else None,
+            "persisted": self.sqlite_path is not None,
+            "persistence_path": str(self.sqlite_path) if self.sqlite_path else None,
+            "load_error": self.load_error,
         }
 
 

@@ -21,6 +21,10 @@ from core.services import (
 )
 
 ENV_KEYS = (
+    "ALPHAIO_CORPUS_DB",
+    "ALPHAIO_PIPELINE",
+    "ALPHAIO_PIPELINE_MODE",
+    "ALPHAIO_PIPELINE_INTERVAL",
     "ALPHAIO_INGEST",
     "ALPHAIO_INGEST_INTERVAL",
     "ALPHAIO_BRIEF",
@@ -320,6 +324,96 @@ class TestDescribeStartup(EnvCase):
         services.start()
         self.assertIn("ingest", describe_startup(services))
 
+
+
+class FakeRiskForPipeline:
+    def check_risk_limits(self, asset):
+        return True
+
+    def calculate_position_size(self, asset, confidence, entry_price=None, stop_loss_pct=None):
+        return 1000.0
+
+
+class FakeEngineForPipeline:
+    def set_price(self, asset, price):
+        pass
+
+    def create_order(self, **kwargs):
+        class Order:
+            order_id = "ord-1"
+        return Order()
+
+    def submit_order(self, order, algo=None):
+        return {"status": "filled"}
+
+
+class TestPipelineWiring(EnvCase):
+    """The pipeline is opt-in, and refuses to invent its own collaborators."""
+
+    def build(self, config, **kwargs):
+        kwargs.setdefault("news_service", FakeNewsService())
+        kwargs.setdefault("alert_manager", FakeAlertManager())
+        kwargs.setdefault("scheduler", FakeScheduler())
+        return BackgroundServices(config, **kwargs)
+
+    def test_pipeline_is_off_by_default(self):
+        self.assertFalse(ServiceConfig.from_env().pipeline_enabled)
+
+    def test_pipeline_mode_defaults_to_paper(self):
+        self.assertEqual(ServiceConfig.from_env().pipeline_mode, "paper")
+
+    def test_pipeline_env_is_read(self):
+        os.environ["ALPHAIO_PIPELINE"] = "1"
+        os.environ["ALPHAIO_PIPELINE_MODE"] = "observe"
+        config = ServiceConfig.from_env()
+        self.assertTrue(config.pipeline_enabled)
+        self.assertEqual(config.pipeline_mode, "observe")
+        self.assertTrue(config.needs_scheduler)
+
+    def test_pipeline_is_skipped_without_risk_and_execution(self):
+        services = self.build(ServiceConfig(pipeline_enabled=True))
+        started = services.start()
+        self.assertNotIn("pipeline", started)
+        self.assertIn("requires an injected risk_manager", services.pipeline_skipped)
+
+    def test_pipeline_registers_when_collaborators_are_present(self):
+        scheduler = FakeScheduler()
+        services = self.build(
+            ServiceConfig(pipeline_enabled=True),
+            scheduler=scheduler,
+            risk_manager=FakeRiskForPipeline(),
+            execution_engine=FakeEngineForPipeline(),
+        )
+        self.assertIn("pipeline", services.start())
+        self.assertIn("pipeline", scheduler.jobs_added)
+
+    def test_unknown_mode_is_refused_rather_than_guessed(self):
+        services = self.build(
+            ServiceConfig(pipeline_enabled=True, pipeline_mode="yolo"),
+            risk_manager=FakeRiskForPipeline(),
+            execution_engine=FakeEngineForPipeline(),
+        )
+        self.assertNotIn("pipeline", services.start())
+        self.assertIn("unknown pipeline mode", services.pipeline_skipped)
+
+    def test_live_mode_without_an_edge_report_runs_as_paper(self):
+        services = self.build(
+            ServiceConfig(pipeline_enabled=True, pipeline_mode="live"),
+            risk_manager=FakeRiskForPipeline(),
+            execution_engine=FakeEngineForPipeline(),
+        )
+        services.start()
+        self.assertEqual(services.pipeline.effective_mode().value, "paper")
+        self.assertTrue(services.pipeline.gate_status()["downgraded"])
+
+
+class TestCorpusPersistenceConfig(EnvCase):
+    def test_corpus_db_is_unset_by_default(self):
+        self.assertIsNone(ServiceConfig.from_env().corpus_db)
+
+    def test_corpus_db_is_read_from_env(self):
+        os.environ["ALPHAIO_CORPUS_DB"] = "/tmp/alphaio-corpus.db"
+        self.assertEqual(ServiceConfig.from_env().corpus_db, "/tmp/alphaio-corpus.db")
 
 if __name__ == "__main__":
     unittest.main()
