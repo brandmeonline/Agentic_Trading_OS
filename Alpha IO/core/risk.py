@@ -18,6 +18,7 @@ from enum import Enum
 
 
 from core.exposure import BrokerAuthoritativeExposure, ExposureView
+from core.risk_anchors import DurableRiskAnchors
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,12 @@ class RiskManager:
         # received while we were down, or a price move on a position we did
         # not touch.
         self.broker_exposure: Optional[BrokerAuthoritativeExposure] = None
+
+        # ATOS-P1-RISK-002: daily_pnl, peak_capital and last_reset_date
+        # below are in-memory and reset on restart. When durable anchors
+        # are attached they become authoritative for the loss and drawdown
+        # limits, so a trip survives the process dying.
+        self.durable_anchors: Optional[DurableRiskAnchors] = None
 
         # Volatility tracking
         self.returns_history: deque = deque(maxlen=self.config.volatility_lookback)
@@ -449,6 +456,20 @@ class RiskManager:
         # Check for risk events
         self._check_risk_events()
 
+    def attach_durable_anchors(self, anchors: DurableRiskAnchors) -> None:
+        """Make loss and drawdown limits survive a restart.
+
+        ATOS-P1-RISK-002. Once attached, an active trip blocks trading even
+        though the in-memory counters were cleared by the restart.
+        """
+        self.durable_anchors = anchors
+
+    def active_risk_trips(self) -> List[str]:
+        """Names of trips currently blocking trading."""
+        if self.durable_anchors is None:
+            return []
+        return self.durable_anchors.active_trips
+
     def check_risk_limits(self, asset: str) -> bool:
         """
         Check if trading should be allowed based on risk limits.
@@ -460,6 +481,14 @@ class RiskManager:
             True if trading is allowed, False otherwise
         """
         self._check_daily_reset()
+
+        # ATOS-P1-RISK-002: a durable trip outranks the in-memory counters.
+        # Those counters were reset by the restart; the trip was not.
+        if self.durable_anchors is not None:
+            allowed, reason = self.durable_anchors.may_trade()
+            if not allowed:
+                self._log_risk_event(RiskEvent.DRAWDOWN_LIMIT, reason)
+                return False
 
         # Daily drawdown check
         if abs(self.daily_pnl) >= self.capital * self.config.max_daily_drawdown and self.daily_pnl < 0:
