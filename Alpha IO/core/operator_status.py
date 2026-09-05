@@ -174,6 +174,126 @@ def account_fingerprint(account_id: Optional[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Frozen feeds
+# ---------------------------------------------------------------------------
+
+#: How long a quote may stay at exactly the same value before the feed is
+#: treated as frozen rather than quiet. Long enough that a genuinely still
+#: market does not trip it, short enough to notice a socket replaying its
+#: last tick.
+DEFAULT_FREEZE_WINDOW = timedelta(minutes=10)
+
+
+@dataclass
+class FeedHealth:
+    """Tracks whether a feed is arriving *and* changing.
+
+    Freshness measured as "when did we last receive something" answers the
+    wrong question. The common feed failure is not silence - it is a
+    disconnected socket replaying its last tick, a cached upstream, or a
+    proxy answering from memory. Every one of those keeps the arrival
+    timestamp current while the number stops meaning anything, and a bar that
+    reads LIVE because the clock moved is exactly the false green light the
+    trust hierarchy exists to prevent.
+
+    So two clocks: when a value last *arrived*, and when it last *changed*.
+    """
+
+    symbol: str
+    last_value: Optional[float] = None
+    last_seen_at: Optional[datetime] = None
+    last_change_at: Optional[datetime] = None
+    repeats: int = 0
+
+    def observe(self, value: float, at: datetime) -> None:
+        if self.last_value is None or value != self.last_value:
+            self.last_change_at = at
+            self.repeats = 0
+        else:
+            self.repeats += 1
+        self.last_value = value
+        self.last_seen_at = at
+
+    def trust(
+        self,
+        now: datetime,
+        arrival_window: timedelta = DEFAULT_DATA_FRESHNESS,
+        freeze_window: timedelta = DEFAULT_FREEZE_WINDOW,
+    ) -> DataTrust:
+        """LIVE only if it is both arriving and moving."""
+        arrival = classify_freshness(
+            None if self.last_seen_at is None else now - self.last_seen_at,
+            arrival_window,
+        )
+        if arrival is not DataTrust.LIVE:
+            return arrival
+        if self.last_change_at is None:
+            return DataTrust.UNAVAILABLE
+        if now - self.last_change_at > freeze_window:
+            return DataTrust.STALE
+        return DataTrust.LIVE
+
+    def frozen(self, now: datetime,
+               freeze_window: timedelta = DEFAULT_FREEZE_WINDOW) -> bool:
+        """Arriving, but not moving."""
+        if self.last_seen_at is None or self.last_change_at is None:
+            return False
+        return (now - self.last_change_at) > freeze_window
+
+    def to_dict(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        now = now or datetime.now(timezone.utc)
+        return {
+            "symbol": self.symbol,
+            "last_value": self.last_value,
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "last_change_at": (
+                self.last_change_at.isoformat() if self.last_change_at else None
+            ),
+            "repeats": self.repeats,
+            "trust": self.trust(now).value,
+            "frozen": self.frozen(now),
+        }
+
+
+class FeedMonitor:
+    """FeedHealth for every symbol, and the worst of them."""
+
+    def __init__(self, freeze_window: timedelta = DEFAULT_FREEZE_WINDOW,
+                 arrival_window: timedelta = DEFAULT_DATA_FRESHNESS) -> None:
+        self.freeze_window = freeze_window
+        self.arrival_window = arrival_window
+        self.feeds: Dict[str, FeedHealth] = {}
+
+    def observe(self, symbol: str, value: float,
+                at: Optional[datetime] = None) -> None:
+        at = at or datetime.now(timezone.utc)
+        self.feeds.setdefault(symbol, FeedHealth(symbol)).observe(value, at)
+
+    def trust(self, now: Optional[datetime] = None) -> DataTrust:
+        now = now or datetime.now(timezone.utc)
+        return worst_trust([
+            feed.trust(now, self.arrival_window, self.freeze_window)
+            for feed in self.feeds.values()
+        ])
+
+    def frozen_symbols(self, now: Optional[datetime] = None) -> List[str]:
+        now = now or datetime.now(timezone.utc)
+        return sorted(
+            symbol for symbol, feed in self.feeds.items()
+            if feed.frozen(now, self.freeze_window)
+        )
+
+    def report(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        now = now or datetime.now(timezone.utc)
+        return {
+            "trust": self.trust(now).value,
+            "frozen": self.frozen_symbols(now),
+            "feeds": [feed.to_dict(now) for feed in
+                      sorted(self.feeds.values(), key=lambda f: f.symbol)],
+        }
+
+
+# ---------------------------------------------------------------------------
 # Surfaces
 # ---------------------------------------------------------------------------
 

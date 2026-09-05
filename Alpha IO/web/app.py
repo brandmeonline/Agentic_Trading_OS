@@ -42,14 +42,13 @@ from core.readiness import (
     liveness,
 )
 from core.operator_status import (
-    DEFAULT_DATA_FRESHNESS,
     BrokerKind,
     DataTrust,
+    FeedMonitor,
     OperatorStatus,
     ReconciliationState,
     Surface as OperatorSurface,
     build_operator_status,
-    classify_freshness,
     reconciliation_from_report,
 )
 
@@ -158,6 +157,10 @@ class TradingState:
         self.last_broker_ok_at: Optional[datetime] = None
         self.last_price_at: Optional[datetime] = None
         self.last_persistence_ok_at: Optional[datetime] = None
+        # A feed that keeps arriving with the same number is not fresh. The
+        # monitor tracks when each symbol last *changed*, not only when it
+        # last arrived. See the section 37 audit, question 11.
+        self.feed_monitor = FeedMonitor()
 
         # Component status
         self.components: Dict[str, bool] = {
@@ -181,8 +184,10 @@ class TradingState:
     def update_price(self, symbol: str, price: float):
         """Update price for a symbol."""
         with self._lock:
+            observed_at = datetime.now(timezone.utc)
             self.prices[symbol] = price
-            self.last_price_at = datetime.now(timezone.utc)
+            self.last_price_at = observed_at
+            self.feed_monitor.observe(symbol, price, observed_at)
 
             # Add to history (keep last 100 points)
             if symbol not in self.price_history:
@@ -863,13 +868,13 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "no quote has been received in this process",
             ))
         else:
-            age = None
-            if prices_at is not None:
-                age = _utcnow() - prices_at
+            now = _utcnow()
+            frozen = trading_state.feed_monitor.frozen_symbols(now)
             surfaces.append(OperatorSurface(
                 "prices",
-                classify_freshness(age, DEFAULT_DATA_FRESHNESS),
-                "broker price poll",
+                trading_state.feed_monitor.trust(now),
+                "frozen feed: " + ", ".join(frozen) if frozen
+                else "broker price poll",
                 observed_at=prices_at,
             ))
 
