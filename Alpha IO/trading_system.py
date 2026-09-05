@@ -1,5 +1,5 @@
 """
-Agentic Trading System - Main Orchestrator (Production-Ready)
+Agentic Trading System - Main Orchestrator
 
 This is the main entry point that integrates ALL advanced components:
 - Deep learning alpha models (LSTM, Transformer, N-BEATS, WaveNet)
@@ -891,7 +891,7 @@ class TradingSystem:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Agentic Trading System - Production-Ready Trading Platform",
+        description="Agentic Trading System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

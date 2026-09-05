@@ -1,16 +1,43 @@
-"""
-Secure Credentials Manager.
+"""Credentials manager — ATOS-P0-SEC-001 / ATOS-P3 credential hardening.
 
-Production-grade secrets management:
-- Encrypted storage of API keys
-- Environment variable integration
-- Keyring support for OS-level security
-- Automatic credential rotation
-- Audit logging of access
+This docstring used to claim "production-grade secrets management",
+"keyring support for OS-level security" and "automatic credential rotation".
+None of those were true: there is no keyring integration, and nothing here
+has ever rotated a credential with a provider. What follows is what the
+module actually is, and its threat model, because a security component whose
+documentation overstates it is worse than one with none - somebody reads the
+claim instead of the code.
+
+**What this stores.** Exchange API keys and secrets, at rest, in
+``.credentials/``. Either Fernet-encrypted (the default) or, in development
+only and only when explicitly permitted, as plaintext JSON.
+
+**Where the master key comes from.** ``CREDENTIALS_PASSWORD`` from the
+environment. If it is unset, a key is derived from local machine attributes -
+and that derivation is development-only, refused for anything marked
+production, because the attributes are guessable by anyone with a shell on
+the host. See docs/threat-model-credentials.md.
+
+**What it protects against.** A credential file copied off the machine
+without the environment that unlocks it: a backup, a mislaid disk, a
+repository commit. That is a real and common exposure and encryption at rest
+answers it.
+
+**What it does not protect against.** Anyone who can run code as this user.
+They can read ``CREDENTIALS_PASSWORD``, or ask this module to decrypt. There
+is no protection against a compromised host here, and the honest answer to
+"is this enough for production" is that production secrets belong in a secret
+manager the application reads and cannot write.
+
+**Rotation.** There is none. ``expires_at`` marks a credential stale locally;
+it does not change anything at the provider. :meth:`rotate` raises rather
+than pretending, because a rotation that quietly does nothing leaves an
+operator believing a leaked key was replaced.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import json
 import base64
@@ -51,14 +78,20 @@ def _try_import_cryptography():
 # Configuration
 # =============================================================================
 
+logger = logging.getLogger(__name__)
+
 @dataclass
 class CredentialConfig:
     """Credential manager configuration."""
     storage_path: str = ".credentials"
     use_encryption: bool = True
-    use_keyring: bool = False  # OS keyring integration
-    auto_rotate_days: int = 90
+    #: Local staleness marking only. Nothing here rotates a provider key; see
+    #: the module docstring and CredentialsManager.rotate.
+    local_expiry_days: int = 90
     audit_access: bool = True
+    #: Plaintext storage is a development convenience and has to be asked for
+    #: by name. It is refused outright for any production credential.
+    allow_plaintext_development_only: bool = False
 
 
 @dataclass
@@ -117,13 +150,31 @@ class EncryptionHelper:
                 "Install it or explicitly disable encryption for local-only development."
             )
 
-    def initialize(self, salt: Optional[bytes] = None):
-        """Initialize encryption with password."""
+    def initialize(self, salt: Optional[bytes] = None, *,
+                   production: bool = False):
+        """Initialize encryption with a password.
+
+        ``production`` refuses the local fallback. A master key reconstructible
+        from environment variables anyone on the host can read is a
+        development convenience; using it for a live trading key is not a
+        weaker version of security, it is the appearance of it.
+        """
         if self._password is None:
-            # Try environment variable
             self._password = os.environ.get("CREDENTIALS_PASSWORD")
             if not self._password:
-                # Generate a machine-specific key
+                if production:
+                    raise CredentialEncryptionError(
+                        "CREDENTIALS_PASSWORD is not set. The local fallback "
+                        "key is derived from USER and HOME, which anyone with "
+                        "a shell on this host can read, and it is refused for "
+                        "production credentials. Supply the master key from "
+                        "the environment or a secret manager."
+                    )
+                logger.warning(
+                    "Using the development fallback encryption key: it is "
+                    "derived from local machine attributes and protects only "
+                    "against a file leaving this host."
+                )
                 self._password = self._get_machine_key()
 
         self._salt = salt or secrets.token_bytes(16)
@@ -147,12 +198,27 @@ class EncryptionHelper:
         return base64.urlsafe_b64encode(kdf.derive(password.encode()))
 
     def _get_machine_key(self) -> str:
-        """Generate machine-specific key."""
-        # Combine various machine identifiers
+        """A development fallback key derived from local attributes.
+
+        Two things were wrong with the previous version.
+
+        The first was a functional bug: it included ``os.getpid()``. The
+        process id changes every run, so the key changed every run, and
+        credentials encrypted by one process could not be decrypted by the
+        next. The store was write-only, and the failure was silent - the load
+        path caught the decryption error, printed an empty message and
+        returned no credentials. A system that "securely stored" its keys and
+        then reported having none.
+
+        The second is the threat model, and it has not gone away: USER and
+        HOME are known to anyone with a shell on this host, so this key
+        protects a file that leaves the machine and nothing else. It is
+        development-only, and :meth:`initialize` refuses it for production.
+        """
         components = [
             os.environ.get("USER", ""),
             os.environ.get("HOME", ""),
-            str(os.getpid()),
+            # Deliberately no PID. See above.
         ]
         return hashlib.sha256("".join(components).encode()).hexdigest()
 
@@ -248,7 +314,11 @@ class CredentialsManager:
             if credential:
                 self._log_access("get", name)
                 if credential.is_expired():
-                    print(f"Warning: Credential '{name}' has expired")
+                    logger.warning(
+                        "Credential %r is past its local expiry. Note that "
+                        "this is a local marker: nothing has rotated it at "
+                        "the provider.", name,
+                    )
             return credential
 
     def remove_credential(self, name: str) -> bool:
@@ -302,8 +372,36 @@ class CredentialsManager:
         with open(salt_file, "wb") as f:
             f.write(self._encryption.salt)
 
+    def _require_plaintext_permitted(self) -> None:
+        """Refuse to write cleartext secrets unless somebody asked for it.
+
+        Two conditions, and the second is not negotiable by configuration: it
+        has to be explicitly permitted, and no credential may be marked
+        production. A comment saying "not recommended" is not a control.
+        """
+        if not self.config.allow_plaintext_development_only:
+            raise CredentialEncryptionError(
+                "plaintext credential storage is refused. Set "
+                "allow_plaintext_development_only if this is a development "
+                "machine; production secrets belong in a secret manager."
+            )
+        production = sorted(
+            name for name, cred in self._credentials.items()
+            if str(cred.environment).lower() in ("production", "live")
+        )
+        if production:
+            raise CredentialEncryptionError(
+                "refusing to write production credential(s) in cleartext: "
+                + ", ".join(production)
+            )
+        logger.warning(
+            "Writing %d credential(s) to %s in cleartext. Development only.",
+            len(self._credentials), self._storage_path,
+        )
+
     def _save_plaintext(self):
-        """Save credentials without encryption (not recommended)."""
+        """Save credentials without encryption. Development only, and gated."""
+        self._require_plaintext_permitted()
         data = {}
         for name, cred in self._credentials.items():
             data[name] = {
@@ -361,11 +459,25 @@ class CredentialsManager:
                 )
         except CredentialEncryptionError:
             raise
-        except Exception as e:
-            print(f"Failed to load encrypted credentials: {e}")
+        except Exception as exc:
+            # Fernet's InvalidToken stringifies to nothing, so the previous
+            # message was literally "Failed to load encrypted credentials: "
+            # followed by silence, and the caller got an empty credential
+            # list. Say what happened and what usually causes it.
+            logger.error(
+                "Failed to decrypt %s (%s). The master key does not match the "
+                "one these credentials were written with - check "
+                "CREDENTIALS_PASSWORD.",
+                cred_file, type(exc).__name__,
+            )
 
     def _load_plaintext(self):
-        """Load plaintext credentials."""
+        """Load plaintext credentials. Same gate as writing them."""
+        if not self.config.allow_plaintext_development_only:
+            raise CredentialEncryptionError(
+                "plaintext credential storage is refused; set "
+                "allow_plaintext_development_only to read a development store"
+            )
         cred_file = self._storage_path / "credentials.json"
 
         if not cred_file.exists():
@@ -386,11 +498,18 @@ class CredentialsManager:
                     created_at=datetime.fromisoformat(cred_data["created_at"]),
                     expires_at=datetime.fromisoformat(cred_data["expires_at"]) if cred_data.get("expires_at") else None,
                 )
-        except Exception as e:
-            print(f"Failed to load credentials: {e}")
+        except Exception as exc:
+            # The type, never the payload. A parse error on a credential file
+            # can quote the content it choked on.
+            logger.error("Failed to load credentials: %s", type(exc).__name__)
 
-    def from_environment(self, prefix: str = ""):
-        """Load credentials from environment variables."""
+    def from_environment(self, prefix: str = "", environment: str = "testnet"):
+        """Load credentials from environment variables.
+
+        ``environment`` is explicit. It used to be inferred - "production" if
+        no prefix was given - so the default path labelled every key it found
+        as production without being told to.
+        """
         exchanges = ["BINANCE", "COINBASE", "KRAKEN"]
 
         for exchange in exchanges:
@@ -408,8 +527,35 @@ class CredentialsManager:
                     api_secret=api_secret,
                     passphrase=os.environ.get(passphrase_var),
                     exchange=exchange.lower(),
-                    environment="production" if not prefix else "testnet",
+                    # Never inferred. A credential silently labelled
+                    # "production" because no prefix was passed is a live key
+                    # wearing whatever label the code guessed.
+                    environment=environment,
                 )
+
+    def rotate(self, name: str) -> None:
+        """Rotate a credential at the provider. Not implemented, and says so.
+
+        Raising is the whole point. A rotate() that re-saved the same key
+        would leave an operator believing a leaked credential had been
+        replaced, which is worse than knowing it has not - they would stop
+        looking for the leak.
+        """
+        raise NotImplementedError(
+            f"provider-side rotation is not implemented, so {name!r} has not "
+            "been rotated. Rotate it in the provider's console and replace it "
+            "here; expires_at is a local staleness marker and changes nothing "
+            "at the provider."
+        )
+
+    def expiring_soon(self, within_days: int = 7) -> List[str]:
+        """Locally-marked credentials approaching their expiry date."""
+        threshold = datetime.now() + timedelta(days=within_days)
+        with self._lock:
+            return sorted(
+                name for name, cred in self._credentials.items()
+                if cred.expires_at is not None and cred.expires_at <= threshold
+            )
 
     def get_access_log(self) -> List[Dict[str, Any]]:
         """Get credential access log."""

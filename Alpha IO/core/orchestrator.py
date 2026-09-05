@@ -1,7 +1,8 @@
 """
 Live Trading System Orchestrator.
 
-Production-ready orchestration layer that:
+Orchestration layer. Whether it is ready to run is a runtime question
+answered by readiness(), not an adjective in a docstring - it:
 - Manages all system components lifecycle
 - Coordinates data flow between modules
 - Handles graceful startup/shutdown

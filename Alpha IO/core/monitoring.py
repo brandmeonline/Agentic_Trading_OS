@@ -1,7 +1,9 @@
 """
 Production Monitoring & Alerting System.
 
-Enterprise-grade monitoring for trading systems:
+Monitoring for trading systems: metrics and health. The alerting that
+actually reaches a person lives in core/alerting.py; the previous wording
+here overstated what this module is.
 - System health monitoring
 - Performance metrics collection
 - Alerting and notifications

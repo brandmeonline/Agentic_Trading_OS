@@ -1,7 +1,8 @@
 """
 REST API Server for Trading System.
 
-Production-grade REST API providing:
+REST API. Most handlers return simulated data unless a trading system is
+attached - see TradingAPIHandlers.simulation_mode. It provides:
 - Trading endpoints (orders, positions, balances)
 - Market data endpoints (tickers, orderbooks, klines)
 - Strategy management endpoints
@@ -1090,7 +1091,7 @@ def generate_openapi_spec(server: RESTAPIServer) -> Dict:
         "openapi": "3.0.0",
         "info": {
             "title": "Agentic Trading System API",
-            "description": "Production-grade REST API for algorithmic trading",
+            "description": "REST API for algorithmic trading",
             "version": "1.0.0",
         },
         "servers": [

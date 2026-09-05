@@ -1,7 +1,8 @@
 """
 Advanced Reinforcement Learning Agents.
 
-Production-grade RL algorithms for trading:
+RL algorithms for trading, implemented in NumPy. No policy here has been
+promoted for live use, and core/model_governance.py is what would decide:
 - Proximal Policy Optimization (PPO)
 - Advantage Actor-Critic (A2C)
 - Soft Actor-Critic (SAC)

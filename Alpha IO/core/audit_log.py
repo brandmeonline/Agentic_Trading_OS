@@ -1,7 +1,9 @@
 """
 Comprehensive Audit Logging System.
 
-Production-grade audit logging for trading systems:
+Audit logging for trading systems. The chain is hash-linked and
+verifiable; whether it satisfies a particular compliance regime is a
+question for that regime, not a claim this docstring can make.
 - Trade and order audit trails
 - System event logging
 - Compliance logging

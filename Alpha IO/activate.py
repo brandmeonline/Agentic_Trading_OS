@@ -48,7 +48,7 @@ BANNER = """
 ║                             ╚██████╔╝███████║                                ║
 ║                              ╚═════╝ ╚══════╝                                ║
 ║                                                                              ║
-║                    Production-Ready Algorithmic Trading                      ║
+║      Algorithmic Trading - run readiness checks before trusting it           ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """

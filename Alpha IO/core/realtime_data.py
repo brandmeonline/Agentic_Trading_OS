@@ -1,7 +1,7 @@
 """
 Real-Time Data Infrastructure.
 
-Production-grade data infrastructure for trading systems:
+Data infrastructure for trading systems:
 - WebSocket feed management
 - Data normalization and validation
 - Feature store for ML features

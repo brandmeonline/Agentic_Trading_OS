@@ -1,7 +1,8 @@
 """
 Centralized Configuration Manager.
 
-Production-grade configuration management:
+Configuration management. The safety-critical values live in
+core/safety_config.py, which is frozen and hashed; this handles the rest:
 - Multi-environment support (dev, staging, production)
 - Hot reloading of configurations
 - Validation and schema enforcement

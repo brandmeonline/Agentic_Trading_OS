@@ -1,5 +1,14 @@
 Trading Agentic App
-This is a modular, autonomous, self-learning trading intelligence system built to detect early alpha signals, execute precision trades, and evolve over time through recursive memory and adaptive agents.
+A modular trading research and execution system: signal ingestion, agent
+arbitration, risk controls and a broker execution path. It learns from its own
+history, and every parameter that learning can change is governed - see
+`core/tuning_governance.py` and `core/model_governance.py`.
+
+**This system is not production ready.** Readiness is a runtime question, not
+a banner: `GET /api/ready` answers it, and `docs/ULTRAPLAN_PRODUCTION_HARDENING.md`
+tracks what is outstanding. The description here used to end with a
+comparison against institutional trading desks, which was a claim with
+nothing behind it, so it is gone.
 
 It supports:
 

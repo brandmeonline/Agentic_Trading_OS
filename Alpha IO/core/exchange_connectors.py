@@ -1,7 +1,9 @@
 """
 Live Exchange API Connectors.
 
-Production-grade exchange connectivity:
+Exchange connectivity. IMPORTANT: the Binance and Coinbase request paths
+are simulated - _request() builds nothing and returns _mock_request() output.
+The signing helpers are real; the connectivity is not. The declared surface:
 - Binance (Spot, Futures, WebSocket)
 - Coinbase (Advanced Trade API, WebSocket)
 - Abstract base classes for custom exchanges

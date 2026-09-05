@@ -49,9 +49,9 @@ FLOORS: Dict[str, Tuple[int, str]] = {
     "core/persistence_policy.py": (90, ""),
 
     # Security-sensitive.
-    "core/credentials.py": (35, "the encrypted store, rotation and CLI paths "
-                                "are untested; this floor is a placeholder "
-                                "and the debt is the point of recording it"),
+    "core/credentials.py": (60, "the CLI and keyring-adjacent paths are still "
+                                "untested; the storage, gating and redaction "
+                                "paths are covered by the section 29 pass"),
     "core/net_guard.py": (95, ""),
 
     # Backtest honesty.

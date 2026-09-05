@@ -1,7 +1,8 @@
 """
 Database Persistence Layer.
 
-Production-grade data persistence:
+Data persistence. SQLite is the implemented backend; the PostgreSQL and
+Redis paths below are declared rather than exercised:
 - SQLite for local development
 - PostgreSQL support for production
 - Redis caching layer
