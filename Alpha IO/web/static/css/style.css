@@ -3339,3 +3339,59 @@ body {
 @media (prefers-reduced-motion: reduce) {
     .tm * { transition: none !important; animation: none !important; }
 }
+
+/* =============================================================================
+   Operator status bar - ATOS-P2-UI-001 / INV-ATOS-012
+   The bar is loud on purpose. It sits above the page title on every page and
+   is the first thing read, because the question it answers - "is what I am
+   looking at real?" - comes before every other question on the screen.
+   ============================================================================= */
+
+.operator-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 8px 24px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.operator-bar.level-ok       { background: #10381f; color: #b7f0c8; }
+.operator-bar.level-warning  { background: #4a3a10; color: #ffe08a; }
+.operator-bar.level-critical { background: #4d1414; color: #ffc9c9; }
+
+.operator-badges,
+.operator-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+}
+
+.op-badge {
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* Data trust gets its own colours regardless of the bar level: a DEMO panel
+   on an otherwise healthy page must still be unmissable. */
+.op-badge.trust-live        { background: #0f5132; color: #d1f7e0; border-color: #1c8d55; }
+.op-badge.trust-stale       { background: #664d03; color: #ffe69c; border-color: #b58900; }
+.op-badge.trust-invalid     { background: #58151c; color: #f7d4d7; border-color: #b02a37; }
+.op-badge.trust-demo        { background: #6a1b9a; color: #f3d9ff; border-color: #ab47bc; }
+.op-badge.trust-unavailable { background: #343a40; color: #dee2e6; border-color: #6c757d; }
+
+.op-metric { opacity: 0.85; white-space: nowrap; }
+.op-metric.breach { opacity: 1; font-weight: 700; text-decoration: underline; }
+
+.operator-banner {
+    flex: 1 1 100%;
+    font-weight: 600;
+    opacity: 0.95;
+}

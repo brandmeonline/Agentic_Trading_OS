@@ -36,7 +36,49 @@ except ImportError:
     print("Flask not installed. Run: pip install flask")
 
 
+from core.operator_status import (
+    DEFAULT_DATA_FRESHNESS,
+    BrokerKind,
+    DataTrust,
+    OperatorStatus,
+    ReconciliationState,
+    Surface as OperatorSurface,
+    build_operator_status,
+    classify_freshness,
+    reconciliation_from_report,
+)
+
 logger = logging.getLogger(__name__)
+
+#: Dashboard panels whose numbers come from ``core/blockchain.py`` sample data
+#: and ``random.uniform`` rather than from any venue. ATOS-P2-UI-001 does not
+#: require removing them; it requires that they never read as live.
+DEMO_BACKED_SURFACES = (
+    "defi_portfolio",
+    "defi_protocols",
+    "swap_quotes",
+    "yield_opportunities",
+    "gas_prices",
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _demo_marker(surface: str) -> Dict[str, Any]:
+    """The fields that stop a generated payload reading as an observation.
+
+    Kept as a spread rather than a wrapper so the existing response shape is
+    unchanged and no client breaks; what changes is that the truth now travels
+    with the data instead of living in a comment in ``core/blockchain.py``.
+    """
+    return {
+        "trust": DataTrust.DEMO.value,
+        "trust_reason": "generated sample data, not a market observation",
+        "surface": surface,
+        "tradeable": False,
+    }
 
 # =============================================================================
 # Configuration
@@ -101,6 +143,14 @@ class TradingState:
         # Alpaca client for live data
         self.alpaca_client = None
 
+        # Trust timestamps for the operator status bar (ATOS-P2-UI-001).
+        # None means "never established", which is what the bar reports. They
+        # are deliberately not initialised to "now": a dashboard that has just
+        # started has not observed anything yet.
+        self.last_broker_ok_at: Optional[datetime] = None
+        self.last_price_at: Optional[datetime] = None
+        self.last_persistence_ok_at: Optional[datetime] = None
+
         # Component status
         self.components: Dict[str, bool] = {
             "config_manager": False,
@@ -124,6 +174,7 @@ class TradingState:
         """Update price for a symbol."""
         with self._lock:
             self.prices[symbol] = price
+            self.last_price_at = datetime.now(timezone.utc)
 
             # Add to history (keep last 100 points)
             if symbol not in self.price_history:
@@ -286,6 +337,7 @@ class TradingState:
 
             if self.alpaca_client.connect():
                 self.alpaca_connected = True
+                self.last_broker_ok_at = datetime.now(timezone.utc)
                 self._stop_event.clear()
                 self._start_price_updates()
                 return True
@@ -389,6 +441,9 @@ class TradingState:
         """Stop and join dashboard background workers."""
         self.is_running = False
         self.alpaca_connected = False
+        # The last heartbeat is no longer evidence about a connection that has
+        # been torn down, so the bar must stop reporting it as fresh.
+        self.last_broker_ok_at = None
         self._stop_event.set()
 
         for worker in (self._price_thread, self._sync_thread):
@@ -746,6 +801,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         """Expose CSRF token helper to templates."""
         return {"csrf_token": csrf_token}
 
+
     @app.after_request
     def add_security_headers(response):
         """Set baseline browser security headers."""
@@ -775,6 +831,158 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             "error": "Internal server error",
             "error_id": error_id,
         }), 500
+
+    # ==========================================================================
+    # Operator status bar - ATOS-P2-UI-001
+    # ==========================================================================
+
+    def _surface_declarations() -> List[OperatorSurface]:
+        """What each panel on this dashboard is actually showing.
+
+        Declared here rather than inferred, because the honest answer for some
+        of these panels is "fabricated", and no amount of inspection of a
+        rendered number will reveal that. ``core/blockchain.py`` builds swap
+        quotes and yield opportunities out of ``random.uniform`` and seeds
+        itself with sample holdings; the DeFi page renders them in the same
+        typeface as the account balance.
+        """
+        surfaces: List[OperatorSurface] = []
+
+        prices_at = trading_state.last_price_at
+        if not trading_state.prices:
+            surfaces.append(OperatorSurface(
+                "prices", DataTrust.UNAVAILABLE,
+                "no quote has been received in this process",
+            ))
+        else:
+            age = None
+            if prices_at is not None:
+                age = _utcnow() - prices_at
+            surfaces.append(OperatorSurface(
+                "prices",
+                classify_freshness(age, DEFAULT_DATA_FRESHNESS),
+                "broker price poll",
+                observed_at=prices_at,
+            ))
+
+        surfaces.append(OperatorSurface(
+            "positions",
+            DataTrust.LIVE if trading_state.alpaca_connected
+            else DataTrust.UNAVAILABLE,
+            "broker positions" if trading_state.alpaca_connected
+            else "no broker connection; positions are unverified",
+        ))
+
+        # Everything in core/blockchain.py is generated. It is fine to show it,
+        # and not fine to show it unlabelled.
+        for name in DEMO_BACKED_SURFACES:
+            surfaces.append(OperatorSurface(
+                name, DataTrust.DEMO,
+                "generated sample data, not a market observation",
+            ))
+
+        surfaces.append(OperatorSurface(
+            "controls", DataTrust.LIVE,
+            "operator controls", dangerous_control=True,
+        ))
+        return surfaces
+
+    def _operator_status() -> OperatorStatus:
+        """Assemble the status bar from what can actually be established.
+
+        Every read is defensive. A dashboard attached to a half-built
+        orchestrator must produce a bar that says so, not raise on the way to
+        rendering the page it is supposed to be warning about.
+        """
+        orchestrator = trading_state.orchestrator
+
+        runtime_state = None
+        reconciliation = ReconciliationState.UNKNOWN
+        account_id = None
+        risk_trips: List[str] = []
+        capital_tier_limit = None
+
+        if orchestrator is not None:
+            runtime = getattr(orchestrator, "runtime", None)
+            state = getattr(runtime, "state", None)
+            runtime_state = getattr(state, "value", None)
+            reconciliation = reconciliation_from_report(
+                getattr(orchestrator, "last_reconciliation_report", None)
+            )
+            account_id = getattr(
+                orchestrator, "expected_account_fingerprint", None
+            )
+            risk = getattr(orchestrator, "risk_manager", None)
+            if risk is not None:
+                try:
+                    risk_trips = list(risk.active_risk_trips())
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("Could not read active risk trips")
+                    risk_trips = ["risk state unreadable"]
+            safety = getattr(orchestrator, "safety_config", None)
+            capital_tier_limit = getattr(safety, "max_capital_at_risk", None)
+
+        broker = (
+            BrokerKind.PAPER if trading_state.alpaca_connected
+            else BrokerKind.DISCONNECTED
+        )
+
+        unknown_orders = sum(
+            1 for order in trading_state.orders
+            if str(order.get("status", "")).lower()
+            in ("unknown", "reconciliation_required")
+        )
+
+        return build_operator_status(
+            runtime_state=runtime_state,
+            broker=broker,
+            broker_account_id=account_id,
+            execution_enabled=bool(
+                trading_state.is_running and trading_state.alpaca_connected
+            ),
+            reconciliation=reconciliation,
+            broker_seen_at=trading_state.last_broker_ok_at,
+            market_data_at=trading_state.last_price_at,
+            effective_capital_at_risk=float(
+                sum(
+                    abs(float(p.get("market_value", 0) or 0))
+                    for p in trading_state.positions.values()
+                )
+            ),
+            capital_tier_limit=capital_tier_limit,
+            reserved_capital=float(
+                sum(
+                    abs(float(o.get("notional", 0) or 0))
+                    for o in trading_state.orders
+                )
+            ),
+            open_order_count=len(trading_state.orders),
+            unknown_order_count=unknown_orders,
+            active_risk_trips=risk_trips,
+            last_persistence_ok_at=trading_state.last_persistence_ok_at,
+            surfaces=_surface_declarations(),
+            now=_utcnow(),
+        )
+
+    @app.context_processor
+    def inject_operator_status():
+        """Put the status bar on every page that extends the base template.
+
+        A context processor rather than a per-route argument, because the
+        invariant is "every page", and a per-route argument is a list somebody
+        forgets to add a route to.
+        """
+        try:
+            return {"operator_status": _operator_status().to_dict()}
+        except Exception:  # pragma: no cover - the bar must never break a page
+            logger.exception("Operator status could not be assembled")
+            return {"operator_status": OperatorStatus().to_dict()}
+
+    @app.route("/api/operator-status")
+    @login_required
+    def api_operator_status():
+        """The status bar as JSON, for the periodic refresh."""
+        return jsonify(_operator_status().to_dict())
 
     # ==========================================================================
     # Routes - Pages
@@ -995,6 +1203,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                     client = create_alpaca_client(api_key, api_secret, paper=True)
                     if client.connect():
                         trading_state.alpaca_connected = True
+                        trading_state.last_broker_ok_at = datetime.now(timezone.utc)
                         return jsonify({"success": True, "message": "Connected to Alpaca"})
                     else:
                         trading_state.alpaca_connected = False
@@ -2082,7 +2291,10 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.blockchain import get_blockchain_manager
             manager = get_blockchain_manager()
             summary = manager.get_portfolio_summary()
-            return jsonify({"success": True, "portfolio": summary})
+            return jsonify({
+                "success": True, "portfolio": summary,
+                **_demo_marker("defi_portfolio"),
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
 
@@ -2094,7 +2306,10 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.blockchain import get_blockchain_manager
             manager = get_blockchain_manager()
             chains = manager.get_supported_chains()
-            return jsonify({"success": True, "chains": chains})
+            return jsonify({
+                "success": True, "chains": chains,
+                **_demo_marker("defi_protocols"),
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
 
@@ -2106,7 +2321,10 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.blockchain import get_blockchain_manager
             manager = get_blockchain_manager()
             overview = manager.get_defi_overview()
-            return jsonify({"success": True, "defi": overview})
+            return jsonify({
+                "success": True, "defi": overview,
+                **_demo_marker("defi_protocols"),
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
 
