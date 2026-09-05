@@ -111,6 +111,15 @@ except ImportError:
 # Configuration
 # =============================================================================
 
+from core.runtime_state import (
+    LiveStartupSequence,
+    RuntimeState,
+    RuntimeStateMachine,
+    StartupAborted,
+    build_live_startup_checks,
+)
+
+
 class TradingMode(Enum):
     """Trading operation modes."""
     PAPER = "paper"           # Simulated trading with real data
@@ -295,6 +304,16 @@ class TradingOrchestrator:
             current_capital=self.config.initial_capital,
         )
 
+        # ATOS-P0-REC-001: the runtime state machine decides what the system
+        # is allowed to do. It starts in PAPER; reaching LIVE_ACTIVE requires
+        # the full startup gauntlet to produce evidence.
+        self.runtime = RuntimeStateMachine(
+            RuntimeState.BACKTEST if self.config.mode == TradingMode.BACKTEST
+            else RuntimeState.RESEARCH if self.config.mode == TradingMode.RESEARCH
+            else RuntimeState.PAPER
+        )
+        self.last_startup_report = None
+
         # Core components
         self.event_bus = EventBus()
         self.config_manager: Optional[ConfigManager] = None
@@ -450,6 +469,21 @@ class TradingOrchestrator:
 
         print(f"\nStarting trading system in {self.config.mode.value} mode...")
 
+        # ATOS-P0-REC-001: a live start must pass the full evidence gauntlet.
+        # A restart with empty books is not evidence that the broker holds
+        # nothing, so nothing reaches LIVE_ACTIVE without reconciliation.
+        if not self._run_startup_sequence():
+            print(
+                f"✗ Startup blocked - runtime state is "
+                f"{self.runtime.state.value.upper()}."
+            )
+            if self.last_startup_report and self.last_startup_report.aborted_at:
+                failure = self.last_startup_report.failures[-1]
+                print(f"  Failed check: {failure.name}")
+                print(f"  Reason: {failure.detail}")
+            print("  The system will not add risk until this is resolved.")
+            return False
+
         self._running = True
         self._shutdown_event.clear()
         self.state.status = SystemStatus.RUNNING
@@ -474,6 +508,165 @@ class TradingOrchestrator:
         print(f"  Symbols: {', '.join(self.config.symbols)}")
 
         return True
+
+    def _run_startup_sequence(self) -> bool:
+        """Run the fail-closed startup checks for the configured mode.
+
+        Returns True when the system may proceed. In live mode that means
+        every one of the ULTRAPLAN's fourteen checks produced evidence.
+        """
+        live = self.config.mode == TradingMode.LIVE
+        try:
+            checks = build_live_startup_checks(
+                config_loader=self._check_config,
+                authorization=self._check_live_authorization,
+                storage=self._check_durable_storage,
+                replay=self._check_local_replay,
+                unresolved_intents=self._check_unresolved_intents,
+                broker_auth=self._check_broker_auth,
+                account=self._check_broker_account,
+                positions=self._check_broker_positions,
+                open_orders=self._check_broker_open_orders,
+                recent_fills=self._check_broker_recent_fills,
+                reconciliation=self._check_reconciliation,
+                risk_anchors=self._check_risk_anchors,
+                market_data=self._check_market_data_health,
+                capital_tier=self._check_capital_tier,
+            )
+            sequence = LiveStartupSequence(self.runtime, checks, live=live)
+            report = sequence.run()
+        except StartupAborted as exc:
+            print(f"  Startup sequence refused: {exc}")
+            self.runtime.require_recovery(f"startup sequence invalid: {exc}")
+            return False
+
+        self.last_startup_report = report
+        return report.final_state not in (
+            RuntimeState.FROZEN,
+            RuntimeState.RECOVERY_REQUIRED,
+            RuntimeState.HALTED,
+        )
+
+    # -- startup evidence checks -----------------------------------------
+    #
+    # Each returns (passed, detail). Several are deliberately unimplemented
+    # and fail closed: the capability they are meant to verify does not exist
+    # yet, and reporting "no evidence" is the honest answer. The ULTRAPLAN
+    # issue that supplies each one is named in its message.
+
+    def _check_config(self):
+        if self.config_manager is None and self.config is None:
+            return False, "no configuration loaded"
+        return True, f"mode={self.config.mode.value}"
+
+    def _check_live_authorization(self):
+        # ATOS-P0-AUTH-001 supplies the real authorisation gate. Until then a
+        # live start is refused, because mode="live" is not authorisation.
+        return False, (
+            "explicit live authorization is not implemented yet "
+            "(ATOS-P0-AUTH-001); mode=live alone is not authorization"
+        )
+
+    def _check_durable_storage(self):
+        if self.database is None:
+            return False, "durable database is not initialised"
+        return True, "database initialised"
+
+    def _check_local_replay(self):
+        # ATOS-P2-FAULT-002 supplies deterministic event replay.
+        return False, (
+            "local state replay is not implemented yet (ATOS-P2-FAULT-002); "
+            "starting from an unreplayed book could assume a flat portfolio"
+        )
+
+    def _check_unresolved_intents(self):
+        # ATOS-P0-EXEC-002 built the journal; wiring the orchestrator to one
+        # is part of that worklist being consumed here.
+        journal = getattr(self, "intent_journal", None)
+        if journal is None:
+            return False, (
+                "no order intent journal attached, so unresolved orders cannot "
+                "be enumerated (ATOS-P0-EXEC-002)"
+            )
+        unresolved = journal.unresolved_intents()
+        if unresolved:
+            ids = ", ".join(i.client_order_id for i in unresolved[:5])
+            return False, f"{len(unresolved)} unresolved order intent(s): {ids}"
+        return True, "no unresolved order intents"
+
+    def _check_broker_auth(self):
+        if self.alpaca_client is None and self.exchange is None:
+            return False, "no broker client is connected"
+        return True, "broker client present"
+
+    def _check_broker_account(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for account state"
+        try:
+            account = client.get_account()
+        except Exception as exc:
+            return False, f"account fetch failed: {type(exc).__name__}"
+        if not account:
+            return False, "broker returned no account"
+        return True, f"account status {account.get('status', 'unknown')}"
+
+    def _check_broker_positions(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for positions"
+        try:
+            positions = client.get_positions()
+        except Exception as exc:
+            return False, f"position fetch failed: {type(exc).__name__}"
+        return True, f"{len(positions or [])} broker position(s)"
+
+    def _check_broker_open_orders(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for open orders"
+        try:
+            orders = client.get_orders(status="open")
+        except Exception as exc:
+            return False, f"open order fetch failed: {type(exc).__name__}"
+        return True, f"{len(orders or [])} open broker order(s)"
+
+    def _check_broker_recent_fills(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for recent fills"
+        try:
+            client.get_orders(status="closed", limit=50)
+        except Exception as exc:
+            return False, f"recent fill fetch failed: {type(exc).__name__}"
+        return True, "recent fills fetched"
+
+    def _check_reconciliation(self):
+        # ATOS-P0-REC-002 supplies the reconciliation engine.
+        return False, (
+            "broker reconciliation is not implemented yet (ATOS-P0-REC-002); "
+            "local and broker state have not been compared"
+        )
+
+    def _check_risk_anchors(self):
+        # ATOS-P1-RISK-002 supplies durable drawdown anchors.
+        return False, (
+            "durable risk anchors are not implemented yet (ATOS-P1-RISK-002); "
+            "a restart would reset the daily loss limit"
+        )
+
+    def _check_market_data_health(self):
+        # ATOS-P1-DATA-001 supplies per-symbol feed health.
+        if self.live_data is None:
+            return False, "no live data manager attached"
+        return True, "live data manager attached"
+
+    def _check_capital_tier(self):
+        # ATOS-P3-CAP-001 supplies the persisted promotion ladder.
+        return False, (
+            "no persisted capital tier (ATOS-P3-CAP-001); initial_capital is a "
+            "number, not spend authority"
+        )
 
     def stop(self):
         """Stop the trading system gracefully."""
