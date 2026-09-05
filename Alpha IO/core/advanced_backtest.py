@@ -15,9 +15,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
-from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
-import copy
+from datetime import datetime
 
 
 # =============================================================================
@@ -33,6 +31,13 @@ class WalkForwardConfig:
     num_windows: int = 8  # Number of walk-forward windows
     reoptimize_interval: int = 1  # Windows between reoptimization
     parameter_stability_weight: float = 0.1  # Weight for parameter stability
+    # ATOS-P3-BT-001. Bars dropped between the in-sample and out-of-sample
+    # windows so that no out-of-sample feature reaches back into data the
+    # parameters were fitted on. purge_bars should be at least the longest
+    # feature lookback in the parameter space; embargo_bars covers the serial
+    # correlation that does not stop dead at the boundary.
+    purge_bars: int = 30
+    embargo_bars: int = 5
 
 
 @dataclass
@@ -132,10 +137,23 @@ class WalkForwardOptimizer:
             if end_idx <= start_idx + self.config.min_in_sample_bars:
                 continue
 
-            # Split into in-sample and out-of-sample
+            # Split into in-sample and out-of-sample.
+            #
+            # ATOS-P3-BT-001: the out-of-sample window used to start on the
+            # bar immediately after the in-sample one. Every feature has a
+            # lookback, so the first out-of-sample decisions were computed
+            # from bars the parameters had already been fitted on - the
+            # out-of-sample result was partly in-sample. The gap below carves
+            # that overlap out of the training data, where it belongs.
             is_end = start_idx + int((end_idx - start_idx) * self.config.in_sample_ratio)
-            oos_start = is_end
+            gap = self.config.purge_bars + self.config.embargo_bars
+            oos_start = is_end + gap
             oos_end = end_idx
+
+            if oos_start >= oos_end:
+                # Not enough room to test this period without cheating. The
+                # honest outcome is to skip it, not to shrink the gap.
+                continue
 
             # Slice data
             is_data = {k: v[start_idx:is_end] for k, v in data.items()}
@@ -160,6 +178,7 @@ class WalkForwardOptimizer:
                 "is_end": is_end,
                 "oos_start": oos_start,
                 "oos_end": oos_end,
+                "purge_gap": gap,
                 "parameters": current_params.parameters.copy(),
                 "is_metrics": current_params.in_sample_metrics,
                 "oos_returns": oos_returns,
@@ -236,10 +255,16 @@ class WalkForwardOptimizer:
             elif momentum < -threshold:
                 signals[i] = -1
 
-        # Strategy returns
-        strategy_returns = signals[:-1] * returns[lookback:]
-
-        return strategy_returns
+        # ATOS-P3-BT-001. signals[i] is decided from close[i] and returns[i]
+        # is the close[i] -> close[i+1] move, so the two line up exactly: a
+        # position taken at the close of bar i earns the next bar's return.
+        #
+        # This was `signals[:-1] * returns[lookback:]`, which paired a signal
+        # at bar i with the return from bar i+lookback, and - because those
+        # two slices have different lengths for any lookback other than 1 -
+        # raised ValueError before it could do so. Every call to
+        # WalkForwardOptimizer.run() with a realistic lookback failed.
+        return signals * returns
 
     def _generate_combinations(self, parameter_space: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
         """Generate all parameter combinations."""
@@ -911,7 +936,7 @@ if __name__ == "__main__":
 
     wf_result = wf_optimizer.run(data, parameter_space)
 
-    print(f"\nCombined Metrics:")
+    print("\nCombined Metrics:")
     for k, v in wf_result.combined_metrics.items():
         print(f"  {k}: {v:.4f}")
 
@@ -935,15 +960,15 @@ if __name__ == "__main__":
     # Bootstrap simulation
     mc_result = mc_simulator.simulate_returns(returns, n_periods=252)
 
-    print(f"\nSimulation Statistics:")
+    print("\nSimulation Statistics:")
     for k, v in mc_result.statistics.items():
         print(f"  {k}: {v:.4f}")
 
-    print(f"\nVaR Estimates:")
+    print("\nVaR Estimates:")
     for conf, var in mc_result.var_estimates.items():
         print(f"  {conf*100:.0f}% VaR: {var:.4f}")
 
-    print(f"\nCVaR Estimates:")
+    print("\nCVaR Estimates:")
     for conf, cvar in mc_result.cvar_estimates.items():
         print(f"  {conf*100:.0f}% CVaR: {cvar:.4f}")
 
@@ -974,11 +999,11 @@ if __name__ == "__main__":
 
     regime_result = regime_backtest.run_backtest(prices, regime_strategy)
 
-    print(f"\nOverall Metrics:")
+    print("\nOverall Metrics:")
     for k, v in regime_result.overall_metrics.items():
         print(f"  {k}: {v:.4f}")
 
-    print(f"\nRegime-Specific Performance:")
+    print("\nRegime-Specific Performance:")
     for regime, metrics in regime_result.regime_metrics.items():
         print(f"\n  {regime.value}:")
         for k, v in metrics.items():

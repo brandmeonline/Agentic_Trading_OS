@@ -1,7 +1,9 @@
 """
 Production Monitoring & Alerting System.
 
-Enterprise-grade monitoring for trading systems:
+Monitoring for trading systems: metrics and health. The alerting that
+actually reaches a person lives in core/alerting.py; the previous wording
+here overstated what this module is.
 - System health monitoring
 - Performance metrics collection
 - Alerting and notifications
@@ -12,17 +14,13 @@ Enterprise-grade monitoring for trading systems:
 from __future__ import annotations
 
 import numpy as np
-import json
 import time
 import threading
-import queue
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable, Set
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
-from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import deque
-import hashlib
 
 
 # =============================================================================
@@ -775,7 +773,6 @@ class SystemMonitor:
     def _register_default_checks(self):
         """Register default health checks."""
         def memory_check() -> HealthCheckResult:
-            import sys
             # Simplified memory check
             status = HealthStatus.HEALTHY
             message = "Memory usage normal"
@@ -996,7 +993,7 @@ if __name__ == "__main__":
 
     print(f"\nHealth Status: {dashboard['health']['status']}")
 
-    print(f"\nMetrics:")
+    print("\nMetrics:")
     for name, data in list(dashboard['metrics'].items())[:5]:
         print(f"  {name}: {data}")
 

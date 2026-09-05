@@ -1,7 +1,8 @@
 """
 Live Trading System Orchestrator.
 
-Production-ready orchestration layer that:
+Orchestration layer. Whether it is ready to run is a runtime question
+answered by readiness(), not an adjective in a docstring - it:
 - Manages all system components lifecycle
 - Coordinates data flow between modules
 - Handles graceful startup/shutdown
@@ -11,17 +12,16 @@ Production-ready orchestration layer that:
 
 from __future__ import annotations
 
-import os
 import sys
 import time
-import json
 import signal
+import logging
 import threading
 import queue
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import traceback
 
@@ -38,7 +38,7 @@ except ImportError:
 try:
     from core.credentials import (
         get_credentials_manager, CredentialsManager,
-        get_testnet_endpoint, get_public_endpoint
+        get_testnet_endpoint, get_public_endpoint  # noqa: F401 - availability probe
     )
 except ImportError:
     get_credentials_manager = None
@@ -47,7 +47,7 @@ except ImportError:
 try:
     from core.live_data import (
         create_live_data_manager, LiveDataManager,
-        create_binance_client, BinancePublicClient
+        create_binance_client, BinancePublicClient  # noqa: F401 - availability probe
     )
 except ImportError:
     create_live_data_manager = None
@@ -68,7 +68,7 @@ except ImportError:
 try:
     from core.exchange_connectors import (
         create_binance_connector, create_exchange_manager,
-        BinanceConnector, ExchangeManager
+        BinanceConnector, ExchangeManager  # noqa: F401 - availability probe
     )
 except ImportError:
     create_binance_connector = None
@@ -100,7 +100,7 @@ except ImportError:
 
 try:
     from core.alpaca_connector import (
-        create_alpaca_client, AlpacaClient, AlpacaConfig, AlpacaEnvironment
+        create_alpaca_client, AlpacaClient, AlpacaConfig, AlpacaEnvironment  # noqa: F401 - availability probe
     )
 except ImportError:
     create_alpaca_client = None
@@ -110,6 +110,36 @@ except ImportError:
 # =============================================================================
 # Configuration
 # =============================================================================
+
+from core.live_authorization import (
+    LiveAuthorizationGate,
+    LiveAuthorizationRequest,
+)
+from core.reconciliation import (
+    BrokerSnapshot,
+    LocalSnapshot,
+    ReconciliationEngine,
+)
+from core.capital_ladder import (
+    CapitalLadder,
+    LadderStore,
+    spend_authority,
+)
+from core.readiness import (
+    ReadinessReport,
+    evaluate_readiness,
+    liveness,
+)
+from core.runtime_state import (
+    LiveStartupSequence,
+    RuntimeState,
+    RuntimeStateMachine,
+    StartupAborted,
+    build_live_startup_checks,
+)
+
+logger = logging.getLogger(__name__)
+
 
 class TradingMode(Enum):
     """Trading operation modes."""
@@ -156,8 +186,15 @@ class OrchestratorConfig:
     enable_strategies: bool = True
     enable_rl_agent: bool = False  # Disabled by default (resource intensive)
 
+    # ATOS-P3-CAP-001. Where the persisted capital grant lives. Unset means
+    # no grant, which means no real capital - not a default allowance.
+    capital_ladder_path: Optional[str] = None
+
     # API settings
-    api_host: str = "0.0.0.0"
+    # Loopback by default. The control plane authenticates unconditionally
+    # (ATOS-P2-API-001), but an authenticated service on every interface is
+    # still a service on every interface.
+    api_host: str = "127.0.0.1"
     api_port: int = 8080
 
     # Database settings
@@ -259,6 +296,19 @@ class EventBus:
         if self._processor_thread:
             self._processor_thread.join(timeout=5.0)
 
+    def is_alive(self) -> bool:
+        """Whether events published now would actually be processed.
+
+        ATOS-P2-DEPLOY-001 needs this: a bus whose processor thread has died
+        still accepts publish() without complaint, so every subsequent event
+        goes into a queue nobody reads. Readiness has to be able to notice.
+        """
+        return bool(
+            self._running
+            and self._processor_thread is not None
+            and self._processor_thread.is_alive()
+        )
+
     def _process_events(self):
         """Process events from queue."""
         while self._running:
@@ -293,6 +343,31 @@ class TradingOrchestrator:
             mode=self.config.mode,
             initial_capital=self.config.initial_capital,
             current_capital=self.config.initial_capital,
+        )
+
+        # ATOS-P0-REC-001: the runtime state machine decides what the system
+        # is allowed to do. It starts in PAPER; reaching LIVE_ACTIVE requires
+        # the full startup gauntlet to produce evidence.
+        self.runtime = RuntimeStateMachine(
+            RuntimeState.BACKTEST if self.config.mode == TradingMode.BACKTEST
+            else RuntimeState.RESEARCH if self.config.mode == TradingMode.RESEARCH
+            else RuntimeState.PAPER
+        )
+        # ATOS-P3-CAP-001. The persisted grant, if one exists. Absent, the
+        # system has no spend authority at all, which is the correct default
+        # for a process nobody has authorised.
+        ladder_path = getattr(self.config, "capital_ladder_path", None)
+        self.capital_ladder: Optional[CapitalLadder] = (
+            CapitalLadder(LadderStore(ladder_path)) if ladder_path else None
+        )
+
+        self.last_startup_report = None
+        self.last_reconciliation_report = None
+        self.last_authorization_decision = None
+        # ATOS-P0-AUTH-001 will source this from validated config. Until
+        # then it is unset, and an unset fingerprint is itself a mismatch.
+        self.expected_account_fingerprint = getattr(
+            self.config, "expected_account_fingerprint", None
         )
 
         # Core components
@@ -406,7 +481,7 @@ class TradingOrchestrator:
             print("\n[6/7] Initializing trading strategies...")
             if self.config.enable_strategies and create_default_ensemble:
                 self.strategies = create_default_ensemble()
-                print(f"      ✓ Strategy ensemble initialized")
+                print("      ✓ Strategy ensemble initialized")
             else:
                 print("      ⊘ Strategies disabled or not available")
 
@@ -416,7 +491,14 @@ class TradingOrchestrator:
                 self.api_server = create_api_server(
                     host=self.config.api_host,
                     port=self.config.api_port,
-                    enable_auth=self.config.mode == TradingMode.LIVE
+                    # ATOS-P2-API-001: authentication is unconditional.
+                    # This used to be `mode == LIVE`, which left the whole
+                    # control plane - including POST /api/v1/orders and
+                    # strategy start/stop - unauthenticated in paper mode,
+                    # which is the default. Paper is where promotion evidence
+                    # comes from, so an unauthenticated party who can place
+                    # paper orders can corrupt the case for going live.
+                    enable_auth=True
                 )
                 print(f"      ✓ API server ready on {self.config.api_host}:{self.config.api_port}")
             else:
@@ -450,6 +532,21 @@ class TradingOrchestrator:
 
         print(f"\nStarting trading system in {self.config.mode.value} mode...")
 
+        # ATOS-P0-REC-001: a live start must pass the full evidence gauntlet.
+        # A restart with empty books is not evidence that the broker holds
+        # nothing, so nothing reaches LIVE_ACTIVE without reconciliation.
+        if not self._run_startup_sequence():
+            print(
+                f"✗ Startup blocked - runtime state is "
+                f"{self.runtime.state.value.upper()}."
+            )
+            if self.last_startup_report and self.last_startup_report.aborted_at:
+                failure = self.last_startup_report.failures[-1]
+                print(f"  Failed check: {failure.name}")
+                print(f"  Reason: {failure.detail}")
+            print("  The system will not add risk until this is resolved.")
+            return False
+
         self._running = True
         self._shutdown_event.clear()
         self.state.status = SystemStatus.RUNNING
@@ -474,6 +571,399 @@ class TradingOrchestrator:
         print(f"  Symbols: {', '.join(self.config.symbols)}")
 
         return True
+
+    def _run_startup_sequence(self) -> bool:
+        """Run the fail-closed startup checks for the configured mode.
+
+        Returns True when the system may proceed. In live mode that means
+        every one of the ULTRAPLAN's fourteen checks produced evidence.
+        """
+        live = self.config.mode == TradingMode.LIVE
+        try:
+            checks = build_live_startup_checks(
+                config_loader=self._check_config,
+                authorization=self._check_live_authorization,
+                storage=self._check_durable_storage,
+                replay=self._check_local_replay,
+                unresolved_intents=self._check_unresolved_intents,
+                broker_auth=self._check_broker_auth,
+                account=self._check_broker_account,
+                positions=self._check_broker_positions,
+                open_orders=self._check_broker_open_orders,
+                recent_fills=self._check_broker_recent_fills,
+                reconciliation=self._check_reconciliation,
+                risk_anchors=self._check_risk_anchors,
+                market_data=self._check_market_data_health,
+                capital_tier=self._check_capital_tier,
+            )
+            sequence = LiveStartupSequence(self.runtime, checks, live=live)
+            report = sequence.run()
+        except StartupAborted as exc:
+            print(f"  Startup sequence refused: {exc}")
+            self.runtime.require_recovery(f"startup sequence invalid: {exc}")
+            return False
+
+        self.last_startup_report = report
+        return report.final_state not in (
+            RuntimeState.FROZEN,
+            RuntimeState.RECOVERY_REQUIRED,
+            RuntimeState.HALTED,
+        )
+
+    # -- startup evidence checks -----------------------------------------
+    #
+    # Each returns (passed, detail). Several are deliberately unimplemented
+    # and fail closed: the capability they are meant to verify does not exist
+    # yet, and reporting "no evidence" is the honest answer. The ULTRAPLAN
+    # issue that supplies each one is named in its message.
+
+    def _check_config(self):
+        if self.config_manager is None and self.config is None:
+            return False, "no configuration loaded"
+        return True, f"mode={self.config.mode.value}"
+
+    def _check_live_authorization(self):
+        """Evaluate the fifteen live-activation conditions.
+
+        ATOS-P0-AUTH-001. The request is assembled from what the orchestrator
+        can actually establish. Anything it cannot establish stays at its
+        default, which is "not satisfied" - so a missing capability refuses
+        rather than waves through.
+        """
+        request = self._build_authorization_request()
+        decision = LiveAuthorizationGate().authorize(request)
+        self.last_authorization_decision = decision
+        if decision.authorized:
+            return True, "all fifteen live activation conditions are satisfied"
+        first = decision.first_failure
+        return False, f"{decision.summary()} - {decision.failures.get(first, '')}"
+
+    def _build_authorization_request(self) -> LiveAuthorizationRequest:
+        """Collect the evidence the orchestrator has for a live activation."""
+        journal = getattr(self, "intent_journal", None)
+        unresolved = (
+            [i.client_order_id for i in journal.unresolved_intents()]
+            if journal is not None else []
+        )
+        reconciliation = getattr(self, "last_reconciliation_report", None)
+        broker_fingerprint = None
+        if reconciliation is not None and reconciliation.may_acquire:
+            broker_fingerprint = self.expected_account_fingerprint
+
+        return LiveAuthorizationRequest(
+            explicit_live_flag=bool(getattr(self.config, "explicit_live_flag", False)),
+            human_risk_acknowledgement=getattr(
+                self.config, "live_risk_acknowledgement", None
+            ),
+            environment_designation=getattr(
+                self.config, "environment_designation", None
+            ),
+            credential_present=bool(self.credentials is not None),
+            credential_expires_at=getattr(self.config, "credential_expires_at", None),
+            credential_source=getattr(self.config, "credential_source", None),
+            database_healthy=self.database is not None,
+            state_replay_succeeded=bool(
+                getattr(self, "state_replay_succeeded", False)
+            ),
+            reconciliation_matched=bool(
+                reconciliation is not None and reconciliation.may_acquire
+            ),
+            market_data_healthy=self.live_data is not None,
+            config_hash=getattr(self.config, "config_hash", None),
+            promoted_config_hashes=frozenset(
+                getattr(self.config, "promoted_config_hashes", ()) or ()
+            ),
+            capital_tier_limit=getattr(self.config, "capital_tier_limit", None),
+            active_risk_trips=list(getattr(self, "active_risk_trips", []) or []),
+            unresolved_order_ids=unresolved,
+            expected_account_fingerprint=self.expected_account_fingerprint,
+            broker_account_fingerprint=broker_fingerprint,
+            session_id=getattr(self, "session_id", None),
+            session_id_persisted=bool(getattr(self, "session_id_persisted", False)),
+        )
+
+    def _check_durable_storage(self):
+        if self.database is None:
+            return False, "durable database is not initialised"
+        return True, "database initialised"
+
+    def _check_local_replay(self):
+        # ATOS-P2-FAULT-002 supplies deterministic event replay.
+        return False, (
+            "local state replay is not implemented yet (ATOS-P2-FAULT-002); "
+            "starting from an unreplayed book could assume a flat portfolio"
+        )
+
+    def _check_unresolved_intents(self):
+        # ATOS-P0-EXEC-002 built the journal; wiring the orchestrator to one
+        # is part of that worklist being consumed here.
+        journal = getattr(self, "intent_journal", None)
+        if journal is None:
+            return False, (
+                "no order intent journal attached, so unresolved orders cannot "
+                "be enumerated (ATOS-P0-EXEC-002)"
+            )
+        unresolved = journal.unresolved_intents()
+        if unresolved:
+            ids = ", ".join(i.client_order_id for i in unresolved[:5])
+            return False, f"{len(unresolved)} unresolved order intent(s): {ids}"
+        return True, "no unresolved order intents"
+
+    def _check_broker_auth(self):
+        if self.alpaca_client is None and self.exchange is None:
+            return False, "no broker client is connected"
+        return True, "broker client present"
+
+    def _check_broker_account(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for account state"
+        try:
+            account = client.get_account()
+        except Exception as exc:
+            return False, f"account fetch failed: {type(exc).__name__}"
+        if not account:
+            return False, "broker returned no account"
+        return True, f"account status {account.get('status', 'unknown')}"
+
+    def _check_broker_positions(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for positions"
+        try:
+            positions = client.get_positions()
+        except Exception as exc:
+            return False, f"position fetch failed: {type(exc).__name__}"
+        return True, f"{len(positions or [])} broker position(s)"
+
+    def _check_broker_open_orders(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for open orders"
+        try:
+            orders = client.get_orders(status="open")
+        except Exception as exc:
+            return False, f"open order fetch failed: {type(exc).__name__}"
+        return True, f"{len(orders or [])} open broker order(s)"
+
+    def _check_broker_recent_fills(self):
+        client = self.alpaca_client
+        if client is None:
+            return False, "no broker client to query for recent fills"
+        try:
+            client.get_orders(status="closed", limit=50)
+        except Exception as exc:
+            return False, f"recent fill fetch failed: {type(exc).__name__}"
+        return True, "recent fills fetched"
+
+    def _check_reconciliation(self):
+        """Compare what we believe against what the broker holds.
+
+        ATOS-P0-REC-002. Where a component is missing, the snapshot is marked
+        incomplete rather than empty, so a system with no way to look becomes
+        a mismatch rather than a clean match against nothing.
+        """
+        local_snapshot, broker_snapshot = self._build_reconciliation_snapshots()
+        engine = ReconciliationEngine(
+            expected_account_fingerprint=self.expected_account_fingerprint
+        )
+        report = engine.reconcile(local_snapshot, broker_snapshot)
+        self.last_reconciliation_report = report
+
+        if report.may_acquire:
+            return True, "local and broker state agree"
+        return False, report.summary()
+
+    def _build_reconciliation_snapshots(self):
+        """Assemble both sides of the comparison from whatever exists.
+
+        Every fetch that cannot be performed clears a completeness flag. The
+        reconciliation engine treats an incomplete snapshot as a mismatch, so
+        a missing capability fails closed instead of reading as agreement.
+        """
+        fingerprint = self.expected_account_fingerprint or ""
+
+        broker_snapshot = BrokerSnapshot(account_fingerprint=fingerprint)
+        client = self.alpaca_client
+        if client is None:
+            broker_snapshot.account_complete = False
+            broker_snapshot.positions_complete = False
+            broker_snapshot.open_orders_complete = False
+            broker_snapshot.fills_complete = False
+        else:
+            try:
+                account = client.get_account() or {}
+                broker_snapshot.cash = float(account.get("cash", 0.0) or 0.0)
+                broker_snapshot.equity = float(
+                    account.get("portfolio_value", 0.0) or 0.0
+                )
+                broker_snapshot.buying_power = float(
+                    account.get("buying_power", 0.0) or 0.0
+                )
+            except Exception:
+                logger.exception("Could not fetch broker account for reconciliation")
+                broker_snapshot.account_complete = False
+
+            try:
+                for position in client.get_positions() or []:
+                    symbol = getattr(position, "symbol", None) or position.get("symbol")
+                    qty = getattr(position, "qty", None)
+                    if qty is None and isinstance(position, dict):
+                        qty = position.get("qty", position.get("quantity"))
+                    if symbol is not None and qty is not None:
+                        broker_snapshot.positions[str(symbol)] = float(qty)
+            except Exception:
+                logger.exception("Could not fetch broker positions for reconciliation")
+                broker_snapshot.positions_complete = False
+
+            try:
+                seen = set()
+                for order in client.get_orders(status="open") or []:
+                    client_id = (
+                        getattr(order, "client_order_id", None)
+                        or (order.get("client_order_id") if isinstance(order, dict) else None)
+                    )
+                    if not client_id:
+                        continue
+                    if client_id in seen:
+                        broker_snapshot.duplicate_client_ids.append(client_id)
+                    seen.add(client_id)
+                    broker_snapshot.open_orders[client_id] = (
+                        order if isinstance(order, dict) else vars(order)
+                    )
+            except Exception:
+                logger.exception("Could not fetch broker orders for reconciliation")
+                broker_snapshot.open_orders_complete = False
+
+            try:
+                client.get_orders(status="closed", limit=50)
+            except Exception:
+                logger.exception("Could not fetch broker fills for reconciliation")
+                broker_snapshot.fills_complete = False
+
+        local_snapshot = LocalSnapshot(account_fingerprint=fingerprint)
+        ledger = getattr(self, "ledger", None)
+        if ledger is not None:
+            try:
+                local_snapshot.cash = float(ledger.cash)
+                local_snapshot.positions = {
+                    symbol: float(record.quantity)
+                    for symbol, record in ledger.positions.items()
+                }
+            except Exception:
+                logger.exception("Could not read the local ledger for reconciliation")
+
+        journal = getattr(self, "intent_journal", None)
+        if journal is not None:
+            for intent in journal.unresolved_intents():
+                local_snapshot.unknown_orders[intent.client_order_id] = intent.to_dict()
+
+        return local_snapshot, broker_snapshot
+
+    def _check_risk_anchors(self):
+        # ATOS-P1-RISK-002 supplies durable drawdown anchors.
+        return False, (
+            "durable risk anchors are not implemented yet (ATOS-P1-RISK-002); "
+            "a restart would reset the daily loss limit"
+        )
+
+    def _check_market_data_health(self):
+        # ATOS-P1-DATA-001 supplies per-symbol feed health.
+        if self.live_data is None:
+            return False, "no live data manager attached"
+        return True, "live data manager attached"
+
+    def _check_capital_tier(self):
+        """ATOS-P3-CAP-001: spend authority comes from the persisted ladder.
+
+        initial_capital is a number in a config file. It can lower the amount
+        risked and can never raise it, and with no ladder attached the answer
+        is zero.
+        """
+        allowed, reason = spend_authority(
+            self.capital_ladder, self.config.initial_capital
+        )
+        if allowed <= 0:
+            return False, reason or "no capital tier authorises real capital"
+        tier = self.capital_ladder.tier.name if self.capital_ladder else "none"
+        return True, f"{tier} authorises {allowed:,.2f}" + (
+            f" ({reason})" if reason else ""
+        )
+
+    # -- readiness --------------------------------------------------------
+    #
+    # ATOS-P2-DEPLOY-001. Liveness is answered by the process responding at
+    # all; readiness is answered here, and the two must not be confused. Most
+    # of the evidence is the startup gauntlet's, reused: a requirement that
+    # had to hold before the system started is not one that stops mattering
+    # once it has.
+
+    def readiness_evidence(self) -> Dict[str, Any]:
+        """Everything the readiness probe can establish right now."""
+        return {
+            "persistence_healthy": self._check_durable_storage,
+            "broker_auth_healthy": self._check_broker_auth,
+            "expected_account_confirmed": self._check_broker_account,
+            "reconciliation_fresh_and_matched": self._check_reconciliation,
+            "data_healthy": self._check_market_data_health,
+            "no_unresolved_order_intents": self._check_unresolved_intents,
+            "no_risk_trip": self._check_risk_anchors,
+            "capital_tier_valid": self._check_capital_tier,
+            "strategy_promotion_valid": self._check_strategy_promotion,
+            "event_loops_healthy": self._check_event_loops,
+            "execution_adapter_healthy": self._check_execution_adapter,
+        }
+
+    def readiness(self) -> ReadinessReport:
+        """Whether this process may add new risk, and what is stopping it."""
+        return evaluate_readiness(
+            self.readiness_evidence(),
+            live=self.config.mode == TradingMode.LIVE,
+        )
+
+    def liveness(self) -> Dict[str, Any]:
+        """Whether the process is answering. Says nothing about safety."""
+        return liveness(self.state.start_time)
+
+    def _check_strategy_promotion(self):
+        # ATOS-P3-TUNE-001 supplies champion/challenger promotion records.
+        if self.strategies is None:
+            return False, "no strategy ensemble loaded"
+        return False, (
+            "no promotion record for the running strategy "
+            "(ATOS-P3-TUNE-001); a loaded strategy is not an approved one"
+        )
+
+    def _check_event_loops(self):
+        """Threads the system needs in order to notice anything.
+
+        A dead price thread is the quiet failure: the system keeps answering,
+        keeps its last known prices, and trades on them.
+        """
+        if not self._running:
+            return False, "the system is not running"
+
+        dead = []
+        if self._price_thread is None or not self._price_thread.is_alive():
+            dead.append("price")
+        if self.config.enable_strategies and (
+            self._strategy_thread is None or not self._strategy_thread.is_alive()
+        ):
+            dead.append("strategy")
+        if self.event_bus is not None and not self.event_bus.is_alive():
+            dead.append("event bus")
+
+        if dead:
+            return False, "not running: " + ", ".join(dead)
+        return True, "price, strategy and event loops are alive"
+
+    def _check_execution_adapter(self):
+        client = self.alpaca_client
+        if client is None and self.exchange is None:
+            return False, "no execution adapter is attached"
+        if client is not None and not getattr(client, "connected", False):
+            return False, "the Alpaca adapter is attached but not connected"
+        return True, "an execution adapter is connected"
 
     def stop(self):
         """Stop the trading system gracefully."""
@@ -552,7 +1042,7 @@ class TradingOrchestrator:
                     source="price_updater"
                 ))
 
-        except Exception as e:
+        except Exception:
             # Silently handle price update errors
             pass
 
@@ -618,7 +1108,10 @@ class TradingOrchestrator:
             except Exception as e:
                 self._handle_error(f"strategy_{symbol}", e)
 
-    def _simple_strategy(self, prices: 'np.ndarray', volumes: 'np.ndarray') -> float:
+    def _simple_strategy(self, prices: Any, volumes: Any) -> float:
+        # Annotated Any rather than 'np.ndarray': numpy is imported inside
+        # the body, so the forward reference named a module-level symbol
+        # that does not exist and any get_type_hints() call would raise.
         """Simple momentum strategy for demonstration."""
         import numpy as np
 

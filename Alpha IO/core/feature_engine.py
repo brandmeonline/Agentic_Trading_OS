@@ -12,11 +12,12 @@ Implements cutting-edge feature engineering for financial time series:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
-from abc import ABC, abstractmethod
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -46,6 +47,10 @@ class FeatureConfig:
     regime_window: int = 50
     fractal_scales: List[int] = field(default_factory=lambda: [8, 16, 32, 64])
     normalize_features: bool = True
+    # ATOS-P3-BT-001. A fixed rolling window, not one derived from the length
+    # of the dataset. See FeatureEngine._normalize for why that distinction is
+    # the difference between a causal transform and a leaking one.
+    normalization_window: int = 200
     handle_missing: str = "forward_fill"  # forward_fill, zero, drop
     outlier_threshold: float = 5.0  # Standard deviations
 
@@ -87,6 +92,27 @@ class FeatureSet:
 # =============================================================================
 # Mathematical Utilities
 # =============================================================================
+
+def shift1(data: np.ndarray) -> np.ndarray:
+    """The previous value at each position, with no wrap-around.
+
+    ATOS-P3-BT-001. This exists because ``np.roll(x, 1)`` puts ``x[-1]`` at
+    position 0 - the *last* bar of the series becomes the "previous" bar of
+    the first one. On its own that is one wrong value; fed into an EMA, which
+    is recursive from index 0, the final bar of the dataset contaminates every
+    bar in it. A leak trap over prefixes of the series found exactly this in
+    adx, plus_di and trend_strength.
+
+    Position 0 repeats data[0], so the first difference is zero rather than a
+    number borrowed from the end of history.
+    """
+    if len(data) == 0:
+        return data
+    shifted = np.empty_like(data)
+    shifted[0] = data[0]
+    shifted[1:] = data[:-1]
+    return shifted
+
 
 def ema(data: np.ndarray, period: int) -> np.ndarray:
     """Exponential moving average."""
@@ -368,8 +394,8 @@ class TechnicalFeatures:
         tr = np.maximum(
             high - low,
             np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
+                np.abs(high - shift1(close)),
+                np.abs(low - shift1(close))
             )
         )
         tr[0] = high[0] - low[0]
@@ -452,20 +478,20 @@ class TechnicalFeatures:
         tr = np.maximum(
             high - low,
             np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
+                np.abs(high - shift1(close)),
+                np.abs(low - shift1(close))
             )
         )
         tr[0] = high[0] - low[0]
 
         plus_dm = np.where(
-            (high - np.roll(high, 1)) > (np.roll(low, 1) - low),
-            np.maximum(high - np.roll(high, 1), 0),
+            (high - shift1(high)) > (shift1(low) - low),
+            np.maximum(high - shift1(high), 0),
             0
         )
         minus_dm = np.where(
-            (np.roll(low, 1) - low) > (high - np.roll(high, 1)),
-            np.maximum(np.roll(low, 1) - low, 0),
+            (shift1(low) - low) > (high - shift1(high)),
+            np.maximum(shift1(low) - low, 0),
             0
         )
 
@@ -683,7 +709,6 @@ class MicrostructureFeatures:
             features.append(spread)
             names.append("bid_ask_spread")
 
-            mid = (bid + ask) / 2
             micro_price = (bid * ask + ask * bid) / (bid + ask + 1e-10)
             features.append((close - micro_price) / (micro_price + 1e-10))
             names.append("micro_price_dist")
@@ -1020,14 +1045,14 @@ class RegimeFeatures:
         tr = np.maximum(
             high - low,
             np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
+                np.abs(high - shift1(close)),
+                np.abs(low - shift1(close))
             )
         )
         tr[0] = high[0] - low[0]
 
-        plus_dm = np.maximum(high - np.roll(high, 1), 0)
-        minus_dm = np.maximum(np.roll(low, 1) - low, 0)
+        plus_dm = np.maximum(high - shift1(high), 0)
+        minus_dm = np.maximum(shift1(low) - low, 0)
 
         plus_dm = np.where(plus_dm > minus_dm, plus_dm, 0)
         minus_dm = np.where(minus_dm > plus_dm, minus_dm, 0)
@@ -1099,8 +1124,8 @@ class RegimeFeatures:
         tr = np.maximum(
             high - low,
             np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
+                np.abs(high - shift1(close)),
+                np.abs(low - shift1(close))
             )
         )
         tr[0] = high[0] - low[0]
@@ -1164,16 +1189,16 @@ class RegimeFeatures:
         self, high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int
     ) -> np.ndarray:
         """Probability of breakout based on compression."""
-        # Bollinger Band squeeze
-        ma = sma(close, period)
+        # Bollinger Band squeeze. Only the band width matters here, so
+        # the moving average itself is not needed.
         std = rolling_std(close, period)
 
         # Keltner Channel
         tr = np.maximum(
             high - low,
             np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
+                np.abs(high - shift1(close)),
+                np.abs(low - shift1(close))
             )
         )
         tr[0] = high[0] - low[0]
@@ -1417,7 +1442,7 @@ class FractalFeatures:
         probs = np.array(list(counter.values())) / len(patterns)
 
         # Normalized entropy
-        max_entropy = np.log2(np.math.factorial(order + 1))
+        max_entropy = np.log2(math.factorial(order + 1))
         entropy = -np.sum(probs * np.log2(probs + 1e-10))
 
         return entropy / max_entropy if max_entropy > 0 else 0
@@ -1550,9 +1575,17 @@ class FeatureEngine:
         return features
 
     def _normalize(self, features: np.ndarray) -> np.ndarray:
-        """Z-score normalization with rolling statistics."""
-        # Use rolling mean/std for online normalization
-        window = min(200, len(features) // 2)
+        """Z-score normalization with rolling statistics.
+
+        The window is a fixed configuration value. It used to be
+        ``min(200, len(features) // 2)``, which looks harmless and is not: the
+        normalised value of bar 37 depended on how many bars came *after* it,
+        so the same bar normalised differently in a backtest than it would
+        have live, and a feature computed on 600 bars of history disagreed
+        with the same feature computed on 300. A leak trap over prefixes of
+        the series catches it immediately; reading the line does not.
+        """
+        window = max(2, self.config.normalization_window)
 
         normalized = np.zeros_like(features)
 
@@ -1657,7 +1690,7 @@ if __name__ == "__main__":
     )
 
     print(f"Generated {feature_set.n_features} features for {feature_set.n_samples} samples")
-    print(f"\nFeature categories:")
+    print("\nFeature categories:")
     print(f"  Technical: {feature_set.metadata.get('n_technical', 0)}")
     print(f"  Microstructure: {feature_set.metadata.get('n_microstructure', 0)}")
     print(f"  Regime: {feature_set.metadata.get('n_regime', 0)}")
@@ -1669,6 +1702,6 @@ if __name__ == "__main__":
     importance = engine.get_feature_importance(feature_set, future_returns)
     top_5 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
 
-    print(f"\nTop 5 features by importance:")
+    print("\nTop 5 features by importance:")
     for name, imp in top_5:
         print(f"  {name}: {imp:.4f}")

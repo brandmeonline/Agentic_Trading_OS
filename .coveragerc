@@ -1,0 +1,16 @@
+# Coverage configuration — ATOS-P2-CI-001 / ATOS-P3-TUNE-001.
+#
+# Only the exclusions that are genuinely unreachable from a test run. Nothing
+# here suppresses a code path that could execute in production: the point of
+# the per-module floors in Alpha IO/tools/coverage_gate.py is that they are
+# hard to meet, and an exclusion list is the easiest way to make them not be.
+
+[report]
+exclude_also =
+    # A module's demo block. It runs only when the file is executed directly.
+    if __name__ == .__main__.:
+    # Abstract methods have no body to cover.
+    raise NotImplementedError
+    @(abc\.)?abstractmethod
+    # Type-checking-only imports.
+    if TYPE_CHECKING:

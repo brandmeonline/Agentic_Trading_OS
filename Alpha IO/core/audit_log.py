@@ -1,7 +1,9 @@
 """
 Comprehensive Audit Logging System.
 
-Production-grade audit logging for trading systems:
+Audit logging for trading systems. The chain is hash-linked and
+verifiable; whether it satisfies a particular compliance regime is a
+question for that regime, not a claim this docstring can make.
 - Trade and order audit trails
 - System event logging
 - Compliance logging
@@ -19,12 +21,11 @@ import threading
 import queue
 import gzip
 import os
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any, Callable, Union
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from collections import deque
 import traceback
 
 
@@ -599,7 +600,10 @@ class Logger:
     ):
         """Log audit event."""
         entry = AuditEntry(
-            id=hashlib.md5(f"{time.time()}{action.value}{resource_id}".encode()).hexdigest(),
+            id=hashlib.md5(
+                f"{time.time()}{action.value}{resource_id}".encode(),
+                usedforsecurity=False,
+            ).hexdigest(),
             timestamp=datetime.now(),
             action=action,
             category=self._action_to_category(action),

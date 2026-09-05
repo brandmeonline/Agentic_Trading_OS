@@ -8,21 +8,35 @@ Run this on your local machine to start paper trading.
 import os
 import sys
 import json
+import hashlib
 from pathlib import Path
 
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Load credentials
+# ATOS-P0-SEC-001: the environment is the authoritative credential source. A
+# local config file is a development-only fallback and is gitignored; it must
+# never be committed. Example placeholders live in the .example.json alongside.
 CONFIG_FILE = Path(__file__).parent / "config" / "alpaca_credentials.json"
+EXAMPLE_FILE = Path(__file__).parent / "config" / "alpaca_credentials.example.json"
 
 def load_credentials():
-    """Load Alpaca credentials from config file."""
+    """Load Alpaca credentials, preferring environment variables.
+
+    Returns (api_key, api_secret). Values are never logged in full.
+    """
+    api_key = os.environ.get("ALPACA_API_KEY", "").strip()
+    api_secret = os.environ.get("ALPACA_API_SECRET", "").strip()
+    if api_key and api_secret:
+        return api_key, api_secret
+
+    # Development fallback: untracked local file.
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE) as f:
             data = json.load(f)
             cred = data.get("alpaca_paper", {})
-            return cred.get("api_key", ""), cred.get("api_secret", "")
+            return cred.get("api_key", "").strip(), cred.get("api_secret", "").strip()
     return "", ""
 
 def main():
@@ -35,11 +49,20 @@ def main():
 
     if not api_key or not api_secret:
         print("\n  ✗ No credentials found!")
-        print("  Please add your Alpaca API keys to:")
-        print(f"  {CONFIG_FILE}")
+        print("  Set them in the environment (preferred):")
+        print("    export ALPACA_API_KEY=...")
+        print("    export ALPACA_API_SECRET=...")
+        print("  Or, for local development only, copy")
+        print(f"    {EXAMPLE_FILE.name}")
+        print(f"  to {CONFIG_FILE} and fill it in. That file is gitignored;")
+        print("  never commit it, and rotate any key that has ever been committed.")
         return
 
-    print(f"\n  API Key: {api_key[:8]}...{api_key[-4:]}")
+    # Never print credential material, not even a prefix: 12 of 26 characters
+    # is a material disclosure in a log or a screen share. A short digest
+    # identifies which key is loaded and reveals nothing about it.
+    fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:8]
+    print(f"\n  API Key fingerprint: {fingerprint}")
     print("  Mode: Paper Trading (simulated)")
     print("  Symbols: AAPL, SPY, BTC/USD")
     print("  Capital: $100,000 (simulated)")
@@ -52,7 +75,7 @@ def main():
 
         if client.connect():
             account = client.get_account()
-            print(f"  ✓ Connected to Alpaca!")
+            print("  ✓ Connected to Alpaca!")
             print(f"    Account Status: {account.get('status', 'N/A')}")
             print(f"    Buying Power: ${float(account.get('buying_power', 0)):,.2f}")
             print(f"    Portfolio Value: ${float(account.get('portfolio_value', 0)):,.2f}")

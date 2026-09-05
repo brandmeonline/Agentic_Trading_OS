@@ -1,5 +1,5 @@
 # Agentic Trading System Requirements
-# Production-Ready Trading Platform with Advanced Alpha Generation
+# Application dependencies. CI tooling is pinned separately in requirements-ci.txt.
 
 # =============================================================================
 # CORE DEPENDENCIES (Required)

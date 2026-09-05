@@ -21,5 +21,5 @@ python tests/backtest.py
 ```
 5. Launch Streamlit dashboard:
 ```bash
-streamlit run dashboard/app.py
+python run_web.py  # Dashboard + terminal at /terminal
 ```

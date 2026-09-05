@@ -18,7 +18,9 @@ def process_streams():
     while True:
         signals = stream_social_signals()
         market = monitor_market_data()
-        # Future: push into agent + risk module
+        # Future: push into agent + risk module. Printed for now so the stub
+        # does not silently discard what it just fetched.
+        print(f"[LIVE INGEST] {len(signals)} signal(s), {len(market)} market key(s)")
         time.sleep(5)
 
 if __name__ == "__main__":

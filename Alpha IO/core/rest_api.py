@@ -1,7 +1,8 @@
 """
 REST API Server for Trading System.
 
-Production-grade REST API providing:
+REST API. Most handlers return simulated data unless a trading system is
+attached - see TradingAPIHandlers.simulation_mode. It provides:
 - Trading endpoints (orders, positions, balances)
 - Market data endpoints (tickers, orderbooks, klines)
 - Strategy management endpoints
@@ -23,9 +24,7 @@ import logging
 from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
-from datetime import datetime, timedelta
-from functools import wraps
-import queue
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,10 @@ class RateLimitTier(Enum):
 @dataclass
 class APIConfig:
     """API server configuration."""
-    host: str = "0.0.0.0"
+    # ATOS-P2-API-001: loopback by default. Binding every interface is a
+    # deliberate act that should accompany an external network control, not
+    # something inherited from a default.
+    host: str = "127.0.0.1"
     port: int = 8080
     debug: bool = False
     enable_cors: bool = True
@@ -500,11 +502,14 @@ class TradingAPIHandlers:
         body = request.body or {}
 
         required_fields = ["symbol", "side", "type", "quantity"]
-        for field in required_fields:
-            if field not in body:
+        for required_field in required_fields:
+            if required_field not in body:
                 return APIResponse(
                     status_code=400,
-                    body={"success": False, "error": f"Missing required field: {field}"}
+                    body={
+                        "success": False,
+                        "error": f"Missing required field: {required_field}",
+                    }
                 )
 
         if not self.simulation_mode:
@@ -635,14 +640,14 @@ class TradingAPIHandlers:
             t = int(time.time() - (limit - i) * 3600)
             o = base_price + np.random.randn() * 100
             h = o + abs(np.random.randn() * 50)
-            l = o - abs(np.random.randn() * 50)
+            lo = o - abs(np.random.randn() * 50)
             c = o + np.random.randn() * 30
             v = abs(np.random.randn() * 100) + 10
             klines.append({
                 "timestamp": t,
                 "open": round(o, 2),
                 "high": round(h, 2),
-                "low": round(l, 2),
+                "low": round(lo, 2),
                 "close": round(c, 2),
                 "volume": round(v, 4),
             })
@@ -757,13 +762,59 @@ class RESTAPIServer:
         # Register routes
         self._register_routes()
 
+    def get_readiness(self, request: "APIRequest", params: Dict) -> "APIResponse":
+        """Readiness verdict for a process manager.
+
+        Fail-closed in every direction: no trading system attached is not
+        ready, and a readiness computation that raises is not ready either.
+        An exception here means the system could not establish that it is
+        safe, which is exactly the case the probe exists to catch.
+        """
+        system = getattr(self.handlers, "trading_system", None)
+        if system is None or not hasattr(system, "readiness"):
+            return APIResponse(503, {
+                "ready": False,
+                "blocking_count": 1,
+                "probe": "readiness",
+            })
+        try:
+            report = system.readiness()
+        except Exception:
+            logger.exception("Readiness evaluation failed")
+            return APIResponse(503, {
+                "ready": False, "blocking_count": 1, "probe": "readiness",
+            })
+        body = dict(report.public_dict())
+        body["probe"] = "readiness"
+        return APIResponse(report.http_status, body)
+
     def _register_routes(self):
         """Register all API routes."""
         # Public endpoints
+        # ATOS-P2-DEPLOY-001: liveness only. This answers "is the process
+        # wedged", and deliberately cannot consult readiness - a system that
+        # is unsafe to trade must not be restarted for it, because the restart
+        # discards what it had established about the broker's book.
         self.router.add_route(
             "/api/v1/health",
             "GET",
-            lambda req, params: APIResponse(200, {"status": "ok"}),
+            lambda req, params: APIResponse(200, {
+                "status": "ok",
+                "probe": "liveness",
+                "note": "says nothing about whether the system may trade; "
+                        "see /api/v1/ready",
+            }),
+            auth_required=False
+        )
+
+        # Readiness: whether the system may add new risk. Unauthenticated
+        # because a process manager has to reach it, so it reports only the
+        # verdict and a count - the reasons are internal state and stay behind
+        # the authenticated dashboard route.
+        self.router.add_route(
+            "/api/v1/ready",
+            "GET",
+            self.get_readiness,
             auth_required=False
         )
 
@@ -885,7 +936,7 @@ class RESTAPIServer:
 
             return response
 
-        except Exception as e:
+        except Exception:
             self._error_count += 1
             logger.exception("Unhandled REST API error for request %s", request.request_id)
             return APIResponse(
@@ -1011,7 +1062,7 @@ class WebSocketHandler:
 # =============================================================================
 
 def create_api_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
     enable_auth: bool = True,
     trading_system: Any = None
@@ -1040,7 +1091,7 @@ def generate_openapi_spec(server: RESTAPIServer) -> Dict:
         "openapi": "3.0.0",
         "info": {
             "title": "Agentic Trading System API",
-            "description": "Production-grade REST API for algorithmic trading",
+            "description": "REST API for algorithmic trading",
             "version": "1.0.0",
         },
         "servers": [
@@ -1218,7 +1269,7 @@ def test_rest_api():
     )
     response = auth_server.handle_request(request)
     assert response.status_code == 200
-    print(f"   Authenticated request successful!")
+    print("   Authenticated request successful!")
 
     # Test OpenAPI spec generation
     print("\n10. Testing OpenAPI spec generation...")

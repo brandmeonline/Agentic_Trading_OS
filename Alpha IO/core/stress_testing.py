@@ -13,11 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Any, Callable
 from enum import Enum
-from abc import ABC, abstractmethod
-from datetime import datetime
-import copy
 
 
 # =============================================================================
@@ -445,7 +442,6 @@ class ExtremeValueAnalyzer:
 
         Higher values indicate stronger co-movement in tails.
         """
-        n = len(returns1)
         threshold_pct = self.config.tail_threshold
 
         # Get threshold indices
@@ -842,8 +838,10 @@ class TailRiskHedger:
         recommendations = []
         remaining_budget = portfolio_value * risk_budget
 
-        # 1. Core put protection (50% of budget)
-        put_budget = remaining_budget * 0.5
+        # 1. Core put protection. The intended split is 50% of the budget,
+        # but calculate_put_hedge sizes from the protection floor rather
+        # than from a budget, so that allocation is not actually enforced
+        # on this leg - unlike the VIX leg below, which is given its share.
         put_hedge = self.calculate_put_hedge(
             portfolio_value=portfolio_value,
             target_protection=0.85,  # 85% floor

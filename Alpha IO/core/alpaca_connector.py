@@ -13,14 +13,12 @@ from __future__ import annotations
 import os
 import json
 import time
-import hmac
-import hashlib
-import threading
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
 from enum import Enum
 import urllib.request
+
+from core.net_guard import assert_permitted
 import urllib.parse
 import urllib.error
 
@@ -172,7 +170,9 @@ class AlpacaClient:
 
         for attempt in range(self.config.max_retries):
             try:
-                with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
+                assert_permitted(request)
+                # Scheme checked by assert_permitted() immediately above.
+                with urllib.request.urlopen(request, timeout=self.config.timeout) as response:  # nosec B310
                     return json.loads(response.read().decode())
             except urllib.error.HTTPError as e:
                 if e.code == 429:  # Rate limited
@@ -286,6 +286,29 @@ class AlpacaClient:
         result = self._request("GET", f"/v2/orders/{order_id}")
         return self._parse_order(result)
 
+    def get_order_by_client_order_id(self, client_order_id: str) -> Optional[AlpacaOrder]:
+        """Look an order up by the ID we generated before submitting it.
+
+        ATOS-P0-EXEC-003: this is the only safe way to answer "did my order
+        get through?" after a lost response. Alpaca exposes it directly, so a
+        timeout never has to be resolved by guessing or by resubmitting.
+
+        Returns None when the broker has no such order, which is the only
+        evidence that permits a resubmission.
+        """
+        try:
+            result = self._request(
+                "GET", "/v2/orders:by_client_order_id",
+                params={"client_order_id": client_order_id},
+            )
+        except Exception:
+            # An error here is not proof of absence. The caller must treat
+            # this as unresolved, never as "no order exists".
+            raise
+        if not result:
+            return None
+        return self._parse_order(result)
+
     def get_orders(self, status: str = "open", limit: int = 50) -> List[AlpacaOrder]:
         """Get orders."""
         result = self._request("GET", "/v2/orders", params={"status": status, "limit": limit})
@@ -346,7 +369,7 @@ class AlpacaClient:
 
         # Use appropriate endpoint for asset class
         if asset_class == "crypto":
-            endpoint = f"/v1beta3/crypto/us/bars"
+            endpoint = "/v1beta3/crypto/us/bars"
             params["symbols"] = symbol
         else:
             endpoint = f"/v2/stocks/{symbol}/bars"
@@ -377,7 +400,7 @@ class AlpacaClient:
     def get_latest_quote(self, symbol: str, asset_class: str = "us_equity") -> Dict[str, Any]:
         """Get latest quote for symbol."""
         if asset_class == "crypto":
-            endpoint = f"/v1beta3/crypto/us/latest/quotes"
+            endpoint = "/v1beta3/crypto/us/latest/quotes"
             params = {"symbols": symbol}
         else:
             endpoint = f"/v2/stocks/{symbol}/quotes/latest"
@@ -388,7 +411,7 @@ class AlpacaClient:
     def get_latest_trade(self, symbol: str, asset_class: str = "us_equity") -> Dict[str, Any]:
         """Get latest trade for symbol."""
         if asset_class == "crypto":
-            endpoint = f"/v1beta3/crypto/us/latest/trades"
+            endpoint = "/v1beta3/crypto/us/latest/trades"
             params = {"symbols": symbol}
         else:
             endpoint = f"/v2/stocks/{symbol}/trades/latest"

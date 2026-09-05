@@ -1,7 +1,8 @@
 """
 Database Persistence Layer.
 
-Production-grade data persistence:
+Data persistence. SQLite is the implemented backend; the PostgreSQL and
+Redis paths below are declared rather than exercised:
 - SQLite for local development
 - PostgreSQL support for production
 - Redis caching layer
@@ -14,17 +15,14 @@ from __future__ import annotations
 
 import json
 import time
-import hashlib
-import pickle
 import threading
 import sqlite3
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any, Callable, Tuple, Union, Type, TypeVar
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any, Tuple, TypeVar
 from enum import Enum
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from contextlib import contextmanager
-import queue
 
 
 # =============================================================================

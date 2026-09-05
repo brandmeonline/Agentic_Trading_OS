@@ -1,0 +1,477 @@
+{% extends "base.html" %}
+
+{% block page_title %}Terminal{% endblock %}
+
+{% block content %}
+<div class="tm">
+
+    <!-- Cross-asset strip. Top of screen, always visible, never scrolls away. -->
+    <div class="tm-strip" id="tm-strip" role="region" aria-label="Cross-asset strip">
+        <div class="tm-strip-empty">Loading market strip…</div>
+    </div>
+
+    <!--
+        Readiness rail. The panel that makes this a terminal for *this* system:
+        it reports whether a signal could reach a broker and what is stopping it.
+        Every chip is icon + label + value, so state never rests on colour alone.
+    -->
+    <div class="tm-rail" id="tm-rail" role="region" aria-label="System readiness">
+        <div class="tm-chip" data-state="unknown" id="chip-mode">
+            <span class="tm-chip-icon" aria-hidden="true">●</span>
+            <span class="tm-chip-label">Mode</span>
+            <span class="tm-chip-value">—</span>
+        </div>
+        <div class="tm-chip" data-state="unknown" id="chip-edge">
+            <span class="tm-chip-icon" aria-hidden="true">●</span>
+            <span class="tm-chip-label">Edge</span>
+            <span class="tm-chip-value">—</span>
+        </div>
+        <div class="tm-chip" data-state="unknown" id="chip-ingest">
+            <span class="tm-chip-icon" aria-hidden="true">●</span>
+            <span class="tm-chip-label">Ingest</span>
+            <span class="tm-chip-value">—</span>
+        </div>
+        <div class="tm-chip" data-state="unknown" id="chip-store">
+            <span class="tm-chip-icon" aria-hidden="true">●</span>
+            <span class="tm-chip-label">Store</span>
+            <span class="tm-chip-value">—</span>
+        </div>
+        <div class="tm-chip" data-state="unknown" id="chip-data">
+            <span class="tm-chip-icon" aria-hidden="true">●</span>
+            <span class="tm-chip-label">Market data</span>
+            <span class="tm-chip-value">—</span>
+        </div>
+        <p class="tm-rail-note" id="tm-rail-note"></p>
+    </div>
+
+    <div class="tm-grid">
+
+        <section class="tm-panel tm-sectors">
+            <header class="tm-panel-head">
+                <h2>Sectors</h2>
+                <span class="tm-meta" id="sectors-meta">—</span>
+            </header>
+            <div class="tm-heatmap" id="tm-heatmap">
+                <p class="tm-empty">Loading…</p>
+            </div>
+        </section>
+
+        <section class="tm-panel tm-breadth-panel">
+            <header class="tm-panel-head">
+                <h2>Breadth</h2>
+                <span class="tm-meta" id="breadth-meta">—</span>
+            </header>
+            <div class="tm-panel-body" id="tm-breadth">
+                <p class="tm-empty">Loading…</p>
+            </div>
+        </section>
+
+        <section class="tm-panel tm-candidates">
+            <header class="tm-panel-head">
+                <h2>Candidates</h2>
+                <span class="tm-meta" id="candidates-meta">—</span>
+            </header>
+            <p class="tm-hint">
+                Ranked by measured asymmetry — confidence against coverage.
+                A candidate is a question, not a position.
+            </p>
+            <div class="tm-panel-body tm-scroll" id="tm-candidates">
+                <p class="tm-empty">Loading…</p>
+            </div>
+        </section>
+
+        <section class="tm-panel tm-tape">
+            <header class="tm-panel-head">
+                <h2>Tape</h2>
+                <span class="tm-meta" id="tape-meta">—</span>
+            </header>
+            <div class="tm-panel-body tm-scroll" id="tm-tape">
+                <p class="tm-empty">Loading…</p>
+            </div>
+        </section>
+
+        <section class="tm-panel tm-watchlist">
+            <header class="tm-panel-head">
+                <h2>Watchlist</h2>
+                <span class="tm-meta" id="watchlist-meta">—</span>
+            </header>
+            <div class="tm-watchgrid" id="tm-watchlist">
+                <p class="tm-empty">Loading…</p>
+            </div>
+        </section>
+
+        <section class="tm-panel tm-brief">
+            <header class="tm-panel-head">
+                <h2>Brief</h2>
+                <span class="tm-meta" id="brief-meta">—</span>
+            </header>
+            <pre class="tm-brief-body tm-scroll" id="tm-brief">Loading…</pre>
+        </section>
+
+    </div>
+
+    <footer class="tm-footer">
+        <span id="tm-footer-status">Ready</span>
+        <span class="tm-keys">
+            <kbd>r</kbd> refresh · <kbd>?</kbd> help
+        </span>
+    </footer>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    function el(id) { return document.getElementById(id); }
+
+    function esc(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    function pct(value, digits) {
+        if (value == null || isNaN(value)) return '—';
+        const fixed = Number(value).toFixed(digits == null ? 2 : digits);
+        return (value > 0 ? '+' : '') + fixed + '%';
+    }
+
+    function num(value, digits) {
+        if (value == null || isNaN(value)) return '—';
+        return Number(value).toLocaleString(undefined, {
+            minimumFractionDigits: digits == null ? 2 : digits,
+            maximumFractionDigits: digits == null ? 2 : digits
+        });
+    }
+
+    // Diverging ramp: hue carries polarity, lightness carries magnitude, and
+    // every cell also shows its signed number — so the encoding survives
+    // red-green colour blindness and greyscale printing alike.
+    function heatStyle(change) {
+        if (change == null || isNaN(change)) {
+            return 'background:var(--tm-neutral);';
+        }
+        const magnitude = Math.min(Math.abs(change) / 2.0, 1);   // 2% saturates
+        const alpha = 0.14 + magnitude * 0.72;
+        const hue = change > 0 ? 'var(--tm-up-rgb)' : 'var(--tm-down-rgb)';
+        return 'background:rgba(' + hue + ',' + alpha.toFixed(3) + ');';
+    }
+
+    function dirClass(value) {
+        if (value == null || isNaN(value) || value === 0) return 'tm-flat';
+        return value > 0 ? 'tm-up' : 'tm-down';
+    }
+
+    function relTime(iso) {
+        const then = new Date(iso);
+        if (isNaN(then)) return '';
+        const minutes = Math.round((Date.now() - then.getTime()) / 60000);
+        if (minutes < 1) return 'now';
+        if (minutes < 60) return minutes + 'm';
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return hours + 'h';
+        return Math.round(hours / 24) + 'd';
+    }
+
+    function setChip(id, state, value, title) {
+        const chip = el(id);
+        if (!chip) return;
+        chip.dataset.state = state;
+        chip.querySelector('.tm-chip-value').textContent = value;
+        chip.title = title || '';
+        // Icon is a second channel: state is never carried by colour alone.
+        const icons = { good: '●', warn: '▲', bad: '■', unknown: '○' };
+        chip.querySelector('.tm-chip-icon').textContent = icons[state] || icons.unknown;
+    }
+
+    function footer(message) {
+        el('tm-footer-status').textContent = message;
+    }
+
+    // -----------------------------------------------------------------------
+    // Panels
+    // -----------------------------------------------------------------------
+
+    function renderStrip(market) {
+        const strip = el('tm-strip');
+        const panel = market && market.cross_asset;
+        if (!panel || !panel.available) {
+            strip.innerHTML = '<div class="tm-strip-empty">' +
+                esc((panel && panel.reason) || 'Market data not configured.') + '</div>';
+            return;
+        }
+        strip.innerHTML = panel.tiles.map(function (tile) {
+            const change = tile.change_pct;
+            const price = tile.quote ? tile.quote.price : null;
+            return '<div class="tm-strip-cell ' + dirClass(change) + '" title="' + esc(tile.note) + '">' +
+                '<span class="tm-strip-label">' + esc(tile.label) + '</span>' +
+                '<span class="tm-strip-price">' + num(price) + '</span>' +
+                '<span class="tm-strip-change">' + esc(pct(change)) + '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function renderHeatmap(market) {
+        const host = el('tm-heatmap');
+        const panel = market && market.sector_heatmap;
+        if (!panel || !panel.available) {
+            el('sectors-meta').textContent = 'unavailable';
+            host.innerHTML = '<p class="tm-empty">' +
+                esc((panel && panel.reason) || 'Market data not configured.') + '</p>';
+            return;
+        }
+        el('sectors-meta').textContent = panel.staleness || '';
+        host.innerHTML = panel.tiles.map(function (tile) {
+            const change = tile.change_pct;
+            return '<div class="tm-cell" style="' + heatStyle(change) + '">' +
+                '<span class="tm-cell-sym">' + esc(tile.symbol) + '</span>' +
+                '<span class="tm-cell-name">' + esc(tile.label) + '</span>' +
+                '<span class="tm-cell-change">' + esc(pct(change)) + '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function renderBreadth(market) {
+        const host = el('tm-breadth');
+        const panel = market && market.breadth;
+        if (!panel || !panel.available) {
+            el('breadth-meta').textContent = 'unavailable';
+            host.innerHTML = '<p class="tm-empty">' +
+                esc((panel && panel.reason) || 'Market data not configured.') + '</p>';
+            return;
+        }
+        const b = panel.breadth;
+        el('breadth-meta').textContent = b.covered + '/' + b.universe_size + ' covered';
+
+        const advPct = b.covered ? (b.advancing / b.covered * 100) : 0;
+        const decPct = b.covered ? (b.declining / b.covered * 100) : 0;
+
+        host.innerHTML =
+            '<div class="tm-hero ' + dirClass(b.net) + '">' +
+                (b.net > 0 ? '+' : '') + b.net +
+                '<span class="tm-hero-unit">net advancing</span>' +
+            '</div>' +
+            '<div class="tm-meter" role="img" aria-label="' +
+                b.advancing + ' advancing, ' + b.declining + ' declining">' +
+                '<div class="tm-meter-up" style="width:' + advPct.toFixed(1) + '%"></div>' +
+                '<div class="tm-meter-down" style="width:' + decPct.toFixed(1) + '%"></div>' +
+            '</div>' +
+            '<dl class="tm-stats">' +
+                '<div><dt>Advancing</dt><dd class="tm-up">' + b.advancing + '</dd></div>' +
+                '<div><dt>Declining</dt><dd class="tm-down">' + b.declining + '</dd></div>' +
+                '<div><dt>A/D ratio</dt><dd>' + (b.ratio == null ? '—' : num(b.ratio)) + '</dd></div>' +
+                '<div><dt>Universe</dt><dd>' + esc(market.universe_name || '—') + '</dd></div>' +
+            '</dl>';
+    }
+
+    function renderCandidates(data) {
+        const host = el('tm-candidates');
+        if (!data.available) {
+            el('candidates-meta').textContent = 'unavailable';
+            host.innerHTML = '<p class="tm-empty">Ingestion layer not running.</p>';
+            return;
+        }
+        const rows = data.candidates || [];
+        el('candidates-meta').textContent = rows.length ? rows.length + ' scored' : 'none';
+        if (!rows.length) {
+            host.innerHTML = '<p class="tm-empty">Nothing uncrowded enough to flag.</p>';
+            return;
+        }
+        host.innerHTML =
+            '<table class="tm-table"><thead><tr>' +
+            '<th>Term</th><th class="tm-r">Asym</th><th class="tm-r">Mentions</th>' +
+            '<th class="tm-r">Src</th><th class="tm-r">Crowd</th>' +
+            '</tr></thead><tbody>' +
+            rows.map(function (c) {
+                return '<tr>' +
+                    '<td class="tm-strong">' + esc(c.term) + '</td>' +
+                    '<td class="tm-r tm-accent">' + Number(c.score).toFixed(4) + '</td>' +
+                    '<td class="tm-r">' + esc(c.mentions) + '</td>' +
+                    '<td class="tm-r">' + esc(c.sources) + '</td>' +
+                    '<td class="tm-r">' + Number(c.crowd_sentiment).toFixed(2) + '</td>' +
+                '</tr>';
+            }).join('') +
+            '</tbody></table>';
+    }
+
+    function renderTape(data) {
+        const host = el('tm-tape');
+        if (!data.available) {
+            el('tape-meta').textContent = 'unavailable';
+            host.innerHTML = '<p class="tm-empty">Ingestion layer not running.</p>';
+            return;
+        }
+        const items = data.items || [];
+        if (!items.length) {
+            el('tape-meta').textContent = data.polled ? 'quiet' : 'not started';
+            host.innerHTML = '<p class="tm-empty">' +
+                esc(data.polled ? 'No documents in the window yet.'
+                                : (data.reason || 'Ingestion has not polled yet.')) + '</p>';
+            return;
+        }
+        el('tape-meta').textContent = items.length + ' in window';
+        host.innerHTML = items.map(function (i) {
+            return '<div class="tm-tape-row">' +
+                '<span class="tm-tape-time">' + esc(relTime(i.published)) + '</span>' +
+                '<span class="tm-tape-src">' + esc(i.source) + '</span>' +
+                '<span class="tm-tape-title">' + esc(i.title) + '</span>' +
+                '<span class="tm-tape-ents">' + (i.entities || []).map(esc).join(' ') + '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function renderWatchlist(data) {
+        const host = el('tm-watchlist');
+        const rows = data.symbols || [];
+        if (!rows.length) {
+            el('watchlist-meta').textContent = 'empty';
+            host.innerHTML = '<p class="tm-empty">No symbols priced yet.</p>';
+            return;
+        }
+        el('watchlist-meta').textContent = rows.length + ' symbols';
+        host.innerHTML = rows.map(function (row) {
+            return '<div class="tm-watch">' +
+                '<span class="tm-watch-sym">' + esc(row.symbol) + '</span>' +
+                '<span class="tm-watch-price">' + num(row.price) + '</span>' +
+                '<span class="tm-watch-cov">' +
+                    (row.mentions == null ? 'no coverage'
+                        : esc(row.mentions) + ' mentions · ' + esc(row.sources) + ' src') +
+                '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function renderBrief(data) {
+        if (!data.available) {
+            el('brief-meta').textContent = 'none';
+            el('tm-brief').textContent = data.reason || 'No brief available.';
+            return;
+        }
+        el('brief-meta').textContent = data.name;
+        el('tm-brief').textContent = data.markdown;
+    }
+
+    function renderReadiness(data) {
+        const ingest = data.ingest || {};
+        const pipeline = data.pipeline;
+        const edge = data.edge;
+
+        // Mode: what the pipeline is actually allowed to do right now.
+        if (!pipeline) {
+            setChip('chip-mode', 'unknown', 'not running',
+                    'The signal-to-execution pipeline is not enabled.');
+        } else if (pipeline.skipped) {
+            setChip('chip-mode', 'warn', 'skipped', pipeline.skipped);
+        } else {
+            const effective = pipeline.effective_mode;
+            const state = effective === 'live' ? 'warn' : 'good';
+            const label = pipeline.downgraded
+                ? effective + ' (live requested)'
+                : effective;
+            setChip('chip-mode', state, label,
+                    pipeline.downgraded
+                        ? 'Live was requested but no measured edge exists, so orders stay on paper.'
+                        : 'Pipeline mode in force.');
+        }
+
+        // Edge: the gate that decides whether live is even reachable.
+        if (!edge) {
+            setChip('chip-edge', 'bad', 'unmeasured',
+                    'No evaluation has run. Live trading is unreachable until one does.');
+        } else if (edge.established) {
+            setChip('chip-edge', 'good',
+                    'established ' + (edge.hit_rate * 100).toFixed(1) + '%',
+                    edge.reason || '');
+        } else {
+            setChip('chip-edge', 'bad', edge.verdict,
+                    edge.reason || '');
+        }
+
+        setChip('chip-ingest',
+                ingest.running ? 'good' : (ingest.polled ? 'warn' : 'bad'),
+                ingest.running ? (ingest.items || 0) + ' docs' : (ingest.detail || 'not started'),
+                ingest.last_poll_at ? 'Last poll ' + ingest.last_poll_at : 'Set ALPHAIO_INGEST=1 to start.');
+
+        setChip('chip-store',
+                ingest.persisted ? (ingest.load_error ? 'warn' : 'good') : 'warn',
+                ingest.persisted ? (ingest.load_error ? 'degraded' : 'persisted') : 'memory only',
+                ingest.load_error || 'Set ALPHAIO_CORPUS_DB to survive restarts.');
+
+        const note = el('tm-rail-note');
+        if (pipeline && pipeline.downgraded) {
+            note.textContent = 'Live trading was requested and refused: no measured edge. ' +
+                               'Orders are being written to the ledger only.';
+            note.dataset.state = 'warn';
+        } else if (!edge) {
+            note.textContent = 'No signal evaluation has run yet, so live trading is structurally ' +
+                               'unreachable. This is the intended state until an edge is measured.';
+            note.dataset.state = 'info';
+        } else {
+            note.textContent = '';
+            note.dataset.state = 'none';
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Loading
+    // -----------------------------------------------------------------------
+
+    function load(url, onOk, label) {
+        return fetch(url)
+            .then(function (r) { return r.json(); })
+            .then(onOk)
+            .catch(function () { footer(label + ' failed to load'); });
+    }
+
+    function refreshMarket() {
+        return load('/api/terminal/market', function (data) {
+            renderStrip(data);
+            renderHeatmap(data);
+            renderBreadth(data);
+            if (!data.available && data.reason) {
+                el('sectors-meta').textContent = 'unavailable';
+            }
+            setChip('chip-data',
+                    data.available ? 'good' : 'bad',
+                    data.available ? (data.source || 'live') : 'not configured',
+                    data.reason || (data.source || ''));
+        }, 'Market');
+    }
+
+    function refreshAll() {
+        footer('Refreshing…');
+        Promise.all([
+            refreshMarket(),
+            load('/api/terminal/readiness', renderReadiness, 'Readiness'),
+            load('/api/terminal/news?limit=60', renderTape, 'Tape'),
+            load('/api/terminal/candidates', renderCandidates, 'Candidates'),
+            load('/api/terminal/watchlist', renderWatchlist, 'Watchlist')
+        ]).then(function () {
+            footer('Updated ' + new Date().toLocaleTimeString());
+        });
+    }
+
+    // Keyboard-first, per terminal convention. Ignore while typing.
+    document.addEventListener('keydown', function (event) {
+        const tag = (event.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || event.metaKey || event.ctrlKey) return;
+        if (event.key === 'r') { refreshAll(); }
+        if (event.key === '?') {
+            footer('r refresh · panels auto-refresh every 30s · market every 15s');
+        }
+    });
+
+    refreshAll();
+    load('/api/terminal/brief', renderBrief, 'Brief');
+    setInterval(refreshMarket, 15000);
+    setInterval(refreshAll, 30000);
+}());
+</script>
+{% endblock %}

@@ -14,10 +14,10 @@ import threading
 import secrets
 import logging
 import copy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from functools import wraps
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 # Add parent to path
@@ -36,7 +36,53 @@ except ImportError:
     print("Flask not installed. Run: pip install flask")
 
 
+from core.readiness import (
+    ReadinessReport,
+    evaluate_readiness,
+    liveness,
+)
+from core.operator_status import (
+    BrokerKind,
+    DataTrust,
+    FeedMonitor,
+    OperatorStatus,
+    ReconciliationState,
+    Surface as OperatorSurface,
+    build_operator_status,
+    reconciliation_from_report,
+)
+
 logger = logging.getLogger(__name__)
+
+#: Dashboard panels whose numbers come from ``core/blockchain.py`` sample data
+#: and ``random.uniform`` rather than from any venue. ATOS-P2-UI-001 does not
+#: require removing them; it requires that they never read as live.
+DEMO_BACKED_SURFACES = (
+    "defi_portfolio",
+    "defi_protocols",
+    "swap_quotes",
+    "yield_opportunities",
+    "gas_prices",
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _demo_marker(surface: str) -> Dict[str, Any]:
+    """The fields that stop a generated payload reading as an observation.
+
+    Kept as a spread rather than a wrapper so the existing response shape is
+    unchanged and no client breaks; what changes is that the truth now travels
+    with the data instead of living in a comment in ``core/blockchain.py``.
+    """
+    return {
+        "trust": DataTrust.DEMO.value,
+        "trust_reason": "generated sample data, not a market observation",
+        "surface": surface,
+        "tradeable": False,
+    }
 
 # =============================================================================
 # Configuration
@@ -45,7 +91,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WebConfig:
     """Web server configuration."""
-    host: str = "0.0.0.0"
+    # ATOS-P2-API-001 fixed the REST control plane's bind default and left
+    # this one behind. The dashboard is the more exposed of the two: it can
+    # place orders. Loopback by default; widening it is a deliberate act.
+    host: str = "127.0.0.1"
     port: int = 5000
     debug: bool = False
     secret_key: str = ""
@@ -101,6 +150,18 @@ class TradingState:
         # Alpaca client for live data
         self.alpaca_client = None
 
+        # Trust timestamps for the operator status bar (ATOS-P2-UI-001).
+        # None means "never established", which is what the bar reports. They
+        # are deliberately not initialised to "now": a dashboard that has just
+        # started has not observed anything yet.
+        self.last_broker_ok_at: Optional[datetime] = None
+        self.last_price_at: Optional[datetime] = None
+        self.last_persistence_ok_at: Optional[datetime] = None
+        # A feed that keeps arriving with the same number is not fresh. The
+        # monitor tracks when each symbol last *changed*, not only when it
+        # last arrived. See the section 37 audit, question 11.
+        self.feed_monitor = FeedMonitor()
+
         # Component status
         self.components: Dict[str, bool] = {
             "config_manager": False,
@@ -123,7 +184,10 @@ class TradingState:
     def update_price(self, symbol: str, price: float):
         """Update price for a symbol."""
         with self._lock:
+            observed_at = datetime.now(timezone.utc)
             self.prices[symbol] = price
+            self.last_price_at = observed_at
+            self.feed_monitor.observe(symbol, price, observed_at)
 
             # Add to history (keep last 100 points)
             if symbol not in self.price_history:
@@ -212,61 +276,61 @@ class TradingState:
     def check_components(self):
         """Check which components are available."""
         try:
-            from core.config_manager import ConfigManager
+            from core.config_manager import ConfigManager  # noqa: F401 - availability probe
             self.components["config_manager"] = True
         except ImportError:
             pass
 
         try:
-            from core.credentials import CredentialsManager
+            from core.credentials import CredentialsManager  # noqa: F401 - availability probe
             self.components["credentials"] = True
         except ImportError:
             pass
 
         try:
-            from core.live_data import LiveDataManager
+            from core.live_data import LiveDataManager  # noqa: F401 - availability probe
             self.components["live_data"] = True
         except ImportError:
             pass
 
         try:
-            from core.database import DatabaseManager
+            from core.database import DatabaseManager  # noqa: F401 - availability probe
             self.components["database"] = True
         except ImportError:
             pass
 
         try:
-            from core.rest_api import RESTAPIServer
+            from core.rest_api import RESTAPIServer  # noqa: F401 - availability probe
             self.components["rest_api"] = True
         except ImportError:
             pass
 
         try:
-            from core.exchange_connectors import ExchangeConnector
+            from core.exchange_connectors import ExchangeConnector  # noqa: F401 - availability probe
             self.components["exchange_connectors"] = True
         except ImportError:
             pass
 
         try:
-            from core.alpaca_connector import AlpacaClient
+            from core.alpaca_connector import AlpacaClient  # noqa: F401 - availability probe
             self.components["alpaca_connector"] = True
         except ImportError:
             pass
 
         try:
-            from core.strategy import Strategy
+            from core.strategy import Strategy  # noqa: F401 - availability probe
             self.components["strategies"] = True
         except ImportError:
             pass
 
         try:
-            from core.orchestrator import TradingOrchestrator
+            from core.orchestrator import TradingOrchestrator  # noqa: F401 - availability probe
             self.components["orchestrator"] = True
         except ImportError:
             pass
 
         try:
-            from core.advanced_rl import PPOAgent
+            from core.advanced_rl import PPOAgent  # noqa: F401 - availability probe
             self.components["advanced_rl"] = True
         except ImportError:
             pass
@@ -286,6 +350,7 @@ class TradingState:
 
             if self.alpaca_client.connect():
                 self.alpaca_connected = True
+                self.last_broker_ok_at = datetime.now(timezone.utc)
                 self._stop_event.clear()
                 self._start_price_updates()
                 return True
@@ -389,6 +454,9 @@ class TradingState:
         """Stop and join dashboard background workers."""
         self.is_running = False
         self.alpaca_connected = False
+        # The last heartbeat is no longer evidence about a connection that has
+        # been torn down, so the bar must stop reporting it as fresh.
+        self.last_broker_ok_at = None
         self._stop_event.set()
 
         for worker in (self._price_thread, self._sync_thread):
@@ -422,33 +490,79 @@ class TradingState:
             self.add_error(f"Alpaca positions fetch failed: {exc}", "alpaca")
             return []
 
-    def place_order(self, symbol: str, qty: int, side: str,
-                    order_type: str = "market", limit_price: float = None) -> Dict:
-        """Place an order via Alpaca."""
+    def submit_manual_order(self, symbol: str, qty: int, side: str,
+                            order_type: str = "market",
+                            limit_price: float = None) -> Dict:
+        """Submit an operator-initiated order through the execution boundary.
+
+        Named distinctly from the broker's own ``place_order`` on purpose: the
+        two used to share a name, and that is part of how a direct broker call
+        hid here in plain sight. A reader - or a static check - can now tell
+        the safe path from the unsafe one by the name alone.
+
+        ATOS-P1-AGENT-001. This method used to call
+        ``alpaca_client.place_market_order`` directly, which meant a dashboard
+        button could create real exposure while skipping every control the
+        system has: the durable order-intent WAL, the order lifecycle state
+        machine, idempotency, the risk engine, the runtime state machine and
+        live authorization. None of those can protect an order that never
+        passes through them.
+
+        It now routes through ExecutionEngine, and refuses when no engine is
+        attached rather than falling back to the broker. A dashboard that
+        cannot reach the safe path must not reach the unsafe one instead.
+        """
+        engine = getattr(self, "execution_engine", None)
+        if engine is None:
+            return {
+                "success": False,
+                "error": (
+                    "Order refused: no execution engine is attached to the "
+                    "dashboard. Manual orders must pass through the execution "
+                    "boundary (WAL, lifecycle, idempotency, risk, "
+                    "authorization); placing them directly against the broker "
+                    "is not available."
+                ),
+            }
+
         if not self.alpaca_client or not self.alpaca_connected:
             return {"success": False, "error": "Not connected to Alpaca"}
 
         try:
-            if order_type == "market":
-                result = self.alpaca_client.place_market_order(symbol, qty, side)
-            else:
-                result = self.alpaca_client.place_limit_order(symbol, qty, side, limit_price)
+            from core.execution import OrderSide, OrderType
 
-            if result:
-                self.add_trade({
-                    "time": datetime.now().isoformat(),
-                    "symbol": symbol,
-                    "side": side,
-                    "qty": qty,
-                    "type": order_type,
-                    "price": limit_price or 0,
-                    "status": "submitted"
-                })
-                return {"success": True, "order": result}
-            else:
-                return {"success": False, "error": "Order failed"}
+            try:
+                order_side = OrderSide(str(side).lower())
+            except ValueError:
+                return {"success": False, "error": f"Unrecognised side {side!r}"}
 
-        except Exception as e:
+            order = engine.create_order(
+                asset=symbol,
+                side=order_side,
+                quantity=float(qty),
+                order_type=(
+                    OrderType.MARKET if order_type == "market" else OrderType.LIMIT
+                ),
+                price=limit_price,
+                strategy="manual-dashboard",
+            )
+            execution = engine.submit_order(order)
+
+            self.add_trade({
+                "time": datetime.now().isoformat(),
+                "symbol": symbol,
+                "side": side,
+                "qty": qty,
+                "type": order_type,
+                "price": limit_price or 0,
+                "status": order.status.value,
+            })
+            if execution.success:
+                return {"success": True, "order": order.to_dict()}
+            return {"success": False, "error": execution.message,
+                    "order": order.to_dict()}
+
+        except Exception:
             logger.exception("Alpaca order placement failed")
             return {"success": False, "error": "Order placement failed"}
 
@@ -700,6 +814,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         """Expose CSRF token helper to templates."""
         return {"csrf_token": csrf_token}
 
+
     @app.after_request
     def add_security_headers(response):
         """Set baseline browser security headers."""
@@ -729,6 +844,176 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             "error": "Internal server error",
             "error_id": error_id,
         }), 500
+
+    # ==========================================================================
+    # Operator status bar - ATOS-P2-UI-001
+    # ==========================================================================
+
+    def _surface_declarations() -> List[OperatorSurface]:
+        """What each panel on this dashboard is actually showing.
+
+        Declared here rather than inferred, because the honest answer for some
+        of these panels is "fabricated", and no amount of inspection of a
+        rendered number will reveal that. ``core/blockchain.py`` builds swap
+        quotes and yield opportunities out of ``random.uniform`` and seeds
+        itself with sample holdings; the DeFi page renders them in the same
+        typeface as the account balance.
+        """
+        surfaces: List[OperatorSurface] = []
+
+        prices_at = trading_state.last_price_at
+        if not trading_state.prices:
+            surfaces.append(OperatorSurface(
+                "prices", DataTrust.UNAVAILABLE,
+                "no quote has been received in this process",
+            ))
+        else:
+            now = _utcnow()
+            frozen = trading_state.feed_monitor.frozen_symbols(now)
+            surfaces.append(OperatorSurface(
+                "prices",
+                trading_state.feed_monitor.trust(now),
+                "frozen feed: " + ", ".join(frozen) if frozen
+                else "broker price poll",
+                observed_at=prices_at,
+            ))
+
+        surfaces.append(OperatorSurface(
+            "positions",
+            DataTrust.LIVE if trading_state.alpaca_connected
+            else DataTrust.UNAVAILABLE,
+            "broker positions" if trading_state.alpaca_connected
+            else "no broker connection; positions are unverified",
+        ))
+
+        # Everything in core/blockchain.py is generated. It is fine to show it,
+        # and not fine to show it unlabelled.
+        for name in DEMO_BACKED_SURFACES:
+            surfaces.append(OperatorSurface(
+                name, DataTrust.DEMO,
+                "generated sample data, not a market observation",
+            ))
+
+        surfaces.append(OperatorSurface(
+            "controls", DataTrust.LIVE,
+            "operator controls", dangerous_control=True,
+        ))
+        return surfaces
+
+    def _operator_status() -> OperatorStatus:
+        """Assemble the status bar from what can actually be established.
+
+        Every read is defensive. A dashboard attached to a half-built
+        orchestrator must produce a bar that says so, not raise on the way to
+        rendering the page it is supposed to be warning about.
+        """
+        orchestrator = trading_state.orchestrator
+
+        runtime_state = None
+        reconciliation = ReconciliationState.UNKNOWN
+        account_id = None
+        risk_trips: List[str] = []
+        capital_tier_limit = None
+
+        if orchestrator is not None:
+            runtime = getattr(orchestrator, "runtime", None)
+            state = getattr(runtime, "state", None)
+            runtime_state = getattr(state, "value", None)
+            reconciliation = reconciliation_from_report(
+                getattr(orchestrator, "last_reconciliation_report", None)
+            )
+            account_id = getattr(
+                orchestrator, "expected_account_fingerprint", None
+            )
+            risk = getattr(orchestrator, "risk_manager", None)
+            if risk is not None:
+                try:
+                    risk_trips = list(risk.active_risk_trips())
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("Could not read active risk trips")
+                    risk_trips = ["risk state unreadable"]
+            safety = getattr(orchestrator, "safety_config", None)
+            capital_tier_limit = getattr(safety, "max_capital_at_risk", None)
+
+        broker = (
+            BrokerKind.PAPER if trading_state.alpaca_connected
+            else BrokerKind.DISCONNECTED
+        )
+
+        unknown_orders = sum(
+            1 for order in trading_state.orders
+            if str(order.get("status", "")).lower()
+            in ("unknown", "reconciliation_required")
+        )
+
+        return build_operator_status(
+            runtime_state=runtime_state,
+            broker=broker,
+            broker_account_id=account_id,
+            execution_enabled=bool(
+                trading_state.is_running and trading_state.alpaca_connected
+            ),
+            reconciliation=reconciliation,
+            broker_seen_at=trading_state.last_broker_ok_at,
+            market_data_at=trading_state.last_price_at,
+            effective_capital_at_risk=float(
+                sum(
+                    abs(float(p.get("market_value", 0) or 0))
+                    for p in trading_state.positions.values()
+                )
+            ),
+            capital_tier_limit=capital_tier_limit,
+            reserved_capital=float(
+                sum(
+                    abs(float(o.get("notional", 0) or 0))
+                    for o in trading_state.orders
+                )
+            ),
+            open_order_count=len(trading_state.orders),
+            unknown_order_count=unknown_orders,
+            active_risk_trips=risk_trips,
+            last_persistence_ok_at=trading_state.last_persistence_ok_at,
+            surfaces=_surface_declarations(),
+            now=_utcnow(),
+        )
+
+    @app.context_processor
+    def inject_operator_status():
+        """Put the status bar on every page that extends the base template.
+
+        A context processor rather than a per-route argument, because the
+        invariant is "every page", and a per-route argument is a list somebody
+        forgets to add a route to.
+        """
+        try:
+            return {"operator_status": _operator_status().to_dict()}
+        except Exception:  # pragma: no cover - the bar must never break a page
+            logger.exception("Operator status could not be assembled")
+            return {"operator_status": OperatorStatus().to_dict()}
+
+    def _readiness_report() -> ReadinessReport:
+        """Readiness for the dashboard process.
+
+        With no orchestrator attached there is nothing to establish, so the
+        report is built from empty evidence — which evaluates to every
+        requirement unsatisfied. That is the honest answer for a dashboard
+        that is not driving a trading system, and it is deliberately not
+        special-cased into "ready".
+        """
+        orchestrator = trading_state.orchestrator
+        if orchestrator is None or not hasattr(orchestrator, "readiness_evidence"):
+            return evaluate_readiness({}, live=False)
+        try:
+            return orchestrator.readiness()
+        except Exception:
+            logger.exception("Readiness evaluation failed")
+            return evaluate_readiness({}, live=False)
+
+    @app.route("/api/operator-status")
+    @login_required
+    def api_operator_status():
+        """The status bar as JSON, for the periodic refresh."""
+        return jsonify(_operator_status().to_dict())
 
     # ==========================================================================
     # Routes - Pages
@@ -799,13 +1084,44 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # ==========================================================================
     @app.route("/api/health")
     def api_health():
-        """Public health endpoint for uptime checks."""
-        return jsonify({
+        """Liveness. ATOS-P2-DEPLOY-001.
+
+        Answers "is this process wedged" and nothing else. It must not consult
+        readiness: a trading system that is unsafe to trade is usually worse
+        off restarted, because the restart discards whatever it had
+        established about the broker's book.
+        """
+        payload = dict(liveness(trading_state.start_time))
+        payload.update({
             "status": "ok",
+            "probe": "liveness",
             "service": "agentic-trading-web",
             "version": "1.0.0",
-            "timestamp": datetime.now().isoformat()
+            # Kept from the published contract that uptime monitors already
+            # depend on. Nothing about it is unsafe, so there is no reason to
+            # break it while adding the fields above.
+            "timestamp": payload["at"],
         })
+        return jsonify(payload)
+
+    @app.route("/api/ready")
+    def api_ready():
+        """Readiness for a process manager: the verdict and a count.
+
+        Unauthenticated, because a probe cannot log in — so it reports no
+        internal state. 503 when not ready, which is what stops a load
+        balancer routing to a system that must not take new risk.
+        """
+        report = _readiness_report()
+        return jsonify({**report.public_dict(), "probe": "readiness"}), \
+            report.http_status
+
+    @app.route("/api/readiness")
+    @login_required
+    def api_readiness():
+        """The same verdict with its reasons, for an operator."""
+        report = _readiness_report()
+        return jsonify(report.to_dict()), report.http_status
 
 
     @app.route("/api/stats")
@@ -949,6 +1265,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                     client = create_alpaca_client(api_key, api_secret, paper=True)
                     if client.connect():
                         trading_state.alpaca_connected = True
+                        trading_state.last_broker_ok_at = datetime.now(timezone.utc)
                         return jsonify({"success": True, "message": "Connected to Alpaca"})
                     else:
                         trading_state.alpaca_connected = False
@@ -1015,7 +1332,9 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if order_type not in {"market", "limit", "stop", "stop_limit"}:
                 return jsonify({"success": False, "error": "Invalid order type"})
 
-            result = trading_state.place_order(symbol, qty, side, order_type, limit_price)
+            result = trading_state.submit_manual_order(
+                symbol, qty, side, order_type, limit_price
+            )
             return jsonify(result)
 
         except Exception as e:
@@ -1031,6 +1350,209 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # ==========================================================================
     # Routes - Alerts
     # ==========================================================================
+
+    # ==========================================================================
+    # Terminal (market view) — Phase 6 of docs/ULTRA_PLAN.md
+    # ==========================================================================
+
+    def _feed_service():
+        """The process-wide feed service, or None when unavailable."""
+        try:
+            from core.news_feed import get_news_service
+            return get_news_service()
+        except Exception:
+            return None
+
+    def _corpus():
+        """The process-wide ingestion corpus, or None when unavailable."""
+        service = _feed_service()
+        return service.corpus if service is not None else None
+
+    def _service_clock():
+        """The clock the ingestion service runs on.
+
+        Readers must agree with the writer about what "now" is. The corpus
+        ages items out against the feed service's clock, so anything that
+        computes a recency window over that corpus has to use the same clock
+        or it will disagree about which items are still current.
+        """
+        service = _feed_service()
+        clock = getattr(service, "_clock", None) if service is not None else None
+        return clock if callable(clock) else (lambda: datetime.now(timezone.utc))
+
+    @app.route("/terminal")
+    @login_required
+    def terminal():
+        """Market view: watchlist, news tape, and uncrowded candidates."""
+        return render_template("terminal.html", stats=trading_state.get_stats())
+
+    @app.route("/api/terminal/news")
+    @login_required
+    def api_terminal_news():
+        """Recent ingested documents, newest first."""
+        corpus = _corpus()
+        if corpus is None:
+            return jsonify({"available": False, "items": [], "reason": "ingestion layer unavailable"})
+
+        try:
+            limit = max(1, min(int(request.args.get("limit", 40)), 200))
+        except (TypeError, ValueError):
+            limit = 40
+
+        items = corpus.recent()
+        items.sort(key=lambda item: item.published, reverse=True)
+
+        # An empty tape means one of two things. Say which.
+        service = _feed_service()
+        polled = bool(service and service.poll_count)
+        return jsonify({
+            "available": True,
+            "polled": polled,
+            "reason": None if polled else "ingestion has not polled yet (set ALPHAIO_INGEST=1)",
+            "items": [item.to_dict() for item in items[:limit]],
+            "stats": corpus.stats(),
+            "service": service.stats() if service is not None else None,
+        })
+
+    @app.route("/api/terminal/candidates")
+    @login_required
+    def api_terminal_candidates():
+        """Uncrowded terms ranked by measured asymmetry."""
+        corpus = _corpus()
+        if corpus is None:
+            return jsonify({"available": False, "candidates": []})
+
+        try:
+            from core.reports import BriefGenerator
+            brief = BriefGenerator(corpus=corpus, clock=_service_clock()).generate()
+            return jsonify({
+                "available": True,
+                "candidates": [c.to_dict() for c in brief.candidates],
+                "digest": [d.to_dict() for d in brief.digest],
+            })
+        except Exception:
+            app.logger.exception("terminal candidates failed")
+            return jsonify({"available": False, "candidates": []}), 500
+
+    @app.route("/api/terminal/watchlist")
+    @login_required
+    def api_terminal_watchlist():
+        """Watchlist symbols with last price and current coverage."""
+        corpus = _corpus()
+        # The watchlist is whatever the operator configured; failing that, the
+        # symbols the running system is actually pricing.
+        configured = user_settings.get("trading", {}).get("watchlist")
+        symbols = configured if configured else sorted(trading_state.prices.keys())
+
+        rows = []
+        for symbol in symbols[:16]:
+            row = {"symbol": symbol, "price": trading_state.prices.get(symbol)}
+            if corpus is not None:
+                base = symbol.split("/")[0].split("-")[0].upper()
+                stats = corpus.crowding(base)
+                row.update({
+                    "mentions": stats.mentions,
+                    "sources": stats.sources,
+                    "crowd_sentiment": round(stats.crowd_sentiment, 4),
+                })
+            rows.append(row)
+
+        return jsonify({"symbols": rows, "coverage_available": corpus is not None})
+
+    _market_view = {"instance": None}
+
+    def _market():
+        """Process-wide market view, built once from the environment."""
+        if _market_view["instance"] is None:
+            try:
+                from core.market_view import build_market_view
+                _market_view["instance"] = build_market_view()
+            except Exception:
+                app.logger.exception("market view construction failed")
+                return None
+        return _market_view["instance"]
+
+    @app.route("/api/terminal/market")
+    @login_required
+    def api_terminal_market():
+        """Sector heatmap, breadth, and the cross-asset strip."""
+        view = _market()
+        if view is None:
+            return jsonify({"available": False, "reason": "market view unavailable"})
+        try:
+            return jsonify(dict(view.all_panels(), available=True))
+        except Exception:
+            app.logger.exception("market panels failed")
+            return jsonify({"available": False, "reason": "market data request failed"}), 500
+
+    @app.route("/api/terminal/readiness")
+    @login_required
+    def api_terminal_readiness():
+        """What the system is allowed to do, and why.
+
+        The panel that makes this terminal different: it reports the gate state
+        rather than only the market, so an operator can see at a glance whether
+        a signal could reach a broker and what is stopping it.
+        """
+        payload = {
+            "ingest": {"running": False, "polled": False, "persisted": False, "detail": "not started"},
+            "pipeline": None,
+            "edge": None,
+            "services": [],
+        }
+
+        service = _feed_service()
+        if service is not None:
+            stats = service.stats()
+            corpus = stats.get("corpus", {})
+            payload["ingest"] = {
+                "running": bool(stats.get("running")),
+                "polled": bool(stats.get("poll_count")),
+                "poll_count": stats.get("poll_count", 0),
+                "last_poll_at": stats.get("last_poll_at"),
+                "persisted": bool(corpus.get("persisted")),
+                "items": corpus.get("items_in_window", 0),
+                "sources": len(corpus.get("sources", [])),
+                "load_error": corpus.get("load_error"),
+                "detail": "polling" if stats.get("running") else "not started",
+            }
+
+        try:
+            from core.services import get_background_services
+            services = get_background_services()
+        except Exception:
+            services = None
+
+        if services is not None:
+            payload["services"] = list(services.started)
+            if services.pipeline is not None:
+                gates = services.pipeline.gate_status()
+                payload["pipeline"] = gates
+                payload["edge"] = gates.get("edge")
+            elif services.pipeline_skipped:
+                payload["pipeline"] = {"skipped": services.pipeline_skipped}
+
+        return jsonify(payload)
+
+    @app.route("/api/terminal/brief")
+    @login_required
+    def api_terminal_brief():
+        """The most recent morning brief on disk, if one has been generated."""
+        from pathlib import Path as _Path
+        directory = _Path(os.environ.get("ALPHAIO_REPORT_DIR", "data/reports"))
+        if not directory.is_dir():
+            return jsonify({"available": False, "reason": "no briefs generated yet"})
+
+        briefs = sorted(directory.glob("macro-*.md"))
+        if not briefs:
+            return jsonify({"available": False, "reason": "no briefs generated yet"})
+
+        latest = briefs[-1]
+        return jsonify({
+            "available": True,
+            "name": latest.name,
+            "markdown": latest.read_text(encoding="utf-8"),
+        })
 
     @app.route("/alerts")
     @login_required
@@ -1060,7 +1582,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "trigger_count": a.trigger_count,
                 "created_at": a.created_at
             } for a in alerts])
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/alerts", methods=["POST"])
@@ -1168,7 +1690,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "read": n.read,
                 "data": n.data
             } for n in notifications])
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/notifications/<notification_id>/read", methods=["POST"])
@@ -1207,7 +1729,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.indicators import get_indicator_calculator
             calculator = get_indicator_calculator()
             return jsonify(calculator.list_indicators())
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/indicators/calculate", methods=["POST"])
@@ -1351,7 +1873,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     def api_list_strategies():
         """List strategies in marketplace."""
         try:
-            from core.marketplace import get_marketplace, StrategyCategory, StrategyVisibility
+            from core.marketplace import get_marketplace, StrategyCategory
             mp = get_marketplace()
 
             category = request.args.get("category")
@@ -1397,7 +1919,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 }
             } for s in strategies])
 
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/marketplace/strategies", methods=["POST"])
@@ -1615,7 +2137,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "badges": t.badges
             } for t in traders])
 
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     # ==========================================================================
@@ -1717,7 +2239,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "expires_at": s.expires_at
             } for s in signals])
 
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/signals", methods=["POST"])
@@ -1831,7 +2353,10 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.blockchain import get_blockchain_manager
             manager = get_blockchain_manager()
             summary = manager.get_portfolio_summary()
-            return jsonify({"success": True, "portfolio": summary})
+            return jsonify({
+                "success": True, "portfolio": summary,
+                **_demo_marker("defi_portfolio"),
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
 
@@ -1843,7 +2368,10 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.blockchain import get_blockchain_manager
             manager = get_blockchain_manager()
             chains = manager.get_supported_chains()
-            return jsonify({"success": True, "chains": chains})
+            return jsonify({
+                "success": True, "chains": chains,
+                **_demo_marker("defi_protocols"),
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
 
@@ -1855,7 +2383,10 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.blockchain import get_blockchain_manager
             manager = get_blockchain_manager()
             overview = manager.get_defi_overview()
-            return jsonify({"success": True, "defi": overview})
+            return jsonify({
+                "success": True, "defi": overview,
+                **_demo_marker("defi_protocols"),
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
 
@@ -2334,28 +2865,43 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
 # =============================================================================
 
 def load_stored_credentials():
-    """Load credentials from config file."""
+    """Load Alpaca credentials, preferring environment variables.
+
+    ATOS-P0-SEC-001: the environment is the authoritative credential source.
+    A local config file is a development-only fallback; it is gitignored and
+    must never be committed. Only the credential *source* is logged, never a
+    key, a secret, or any fragment of one.
+    """
     config_file = Path(__file__).parent.parent / "config" / "alpaca_credentials.json"
 
-    if config_file.exists():
+    api_key = os.environ.get("ALPACA_API_KEY", "").strip()
+    api_secret = os.environ.get("ALPACA_API_SECRET", "").strip()
+    source = "environment"
+
+    if not (api_key and api_secret) and config_file.exists():
         try:
             with open(config_file) as f:
                 data = json.load(f)
                 cred = data.get("alpaca_paper", {})
-                trading_state.alpaca_api_key = cred.get("api_key", "")
-                trading_state.alpaca_api_secret = cred.get("api_secret", "")
-                print(f"  Loaded Alpaca credentials from {config_file}")
-
-                # Try to connect to Alpaca
-                if trading_state.alpaca_api_key:
-                    print("  Connecting to Alpaca...")
-                    if trading_state.connect_alpaca():
-                        print("  ✓ Connected to Alpaca")
-                    else:
-                        print("  ⚠ Alpaca connection pending (will connect when network available)")
-
+                api_key = cred.get("api_key", "").strip()
+                api_secret = cred.get("api_secret", "").strip()
+                source = "local development file"
         except Exception as e:
-            print(f"  Failed to load credentials: {e}")
+            # Never interpolate credential content into an error message.
+            print(f"  Failed to load credentials: {type(e).__name__}")
+
+    if api_key and api_secret:
+        trading_state.alpaca_api_key = api_key
+        trading_state.alpaca_api_secret = api_secret
+        print(f"  Loaded Alpaca credentials from {source}")
+
+        print("  Connecting to Alpaca...")
+        if trading_state.connect_alpaca():
+            print("  ✓ Connected to Alpaca")
+        else:
+            print("  ⚠ Alpaca connection pending (will connect when network available)")
+    else:
+        print("  No Alpaca credentials found (set ALPACA_API_KEY / ALPACA_API_SECRET)")
 
     # Check components
     trading_state.check_components()
@@ -2369,7 +2915,7 @@ def load_stored_credentials():
 # =============================================================================
 
 def run_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 5000,
     debug: bool = False,
     admin_password: Optional[str] = None,
@@ -2413,7 +2959,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Agentic Trading OS Web Dashboard")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Host to bind to (default loopback; widen deliberately)")
     parser.add_argument("--port", type=int, default=5000, help="Port to listen on")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--password", default=None, help="Admin password for local startup")

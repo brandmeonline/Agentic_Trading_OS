@@ -19,7 +19,7 @@ class AlphaLeakAgent:
         ]
         leaks = []
         for text in random.sample(candidates, 3):
-            signal_hash = hashlib.sha1(text.encode()).hexdigest()
+            signal_hash = hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()
             source = random.choice(self.leak_sources)
             leaks.append({
                 "text": text,

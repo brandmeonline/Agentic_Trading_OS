@@ -7,12 +7,20 @@ risk controls, and real-time exposure monitoring.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import date, datetime
 from collections import deque
 from enum import Enum
+
+
+from core.exposure import BrokerAuthoritativeExposure, ExposureView
+from core.risk_anchors import DurableRiskAnchors
+
+logger = logging.getLogger(__name__)
 
 
 class RiskLevel(Enum):
@@ -128,6 +136,19 @@ class RiskManager:
         self.positions: Dict[str, Position] = {}
         self.asset_exposure: Dict[str, float] = {}
 
+        # ATOS-P1-RISK-001: local asset_exposure above is a projection. When a
+        # broker view is attached it becomes authoritative for pre-trade
+        # decisions, because a projection cannot see a manual trade, a fill
+        # received while we were down, or a price move on a position we did
+        # not touch.
+        self.broker_exposure: Optional[BrokerAuthoritativeExposure] = None
+
+        # ATOS-P1-RISK-002: daily_pnl, peak_capital and last_reset_date
+        # below are in-memory and reset on restart. When durable anchors
+        # are attached they become authoritative for the loss and drawdown
+        # limits, so a trip survives the process dying.
+        self.durable_anchors: Optional[DurableRiskAnchors] = None
+
         # Volatility tracking
         self.returns_history: deque = deque(maxlen=self.config.volatility_lookback)
         self.volatility: float = 0.0
@@ -143,7 +164,7 @@ class RiskManager:
         self.risk_events: List[Tuple[datetime, RiskEvent, str]] = []
 
         # Daily reset tracking
-        self.last_reset_date: Optional[datetime] = None
+        self.last_reset_date: Optional[date] = None
 
         # Backward compatibility
         self.max_risk_per_trade = self.config.max_risk_per_trade
@@ -302,10 +323,49 @@ class RiskManager:
         """
         return self.calculate_position_size(asset, confidence, entry_price, stop_loss_pct)
 
+    def attach_broker_exposure(
+        self, exposure: BrokerAuthoritativeExposure
+    ) -> None:
+        """Make broker truth authoritative for pre-trade decisions.
+
+        ATOS-P1-RISK-001. Once attached, reserve_exposure consults it first.
+        Without it the manager keeps its previous local-only behaviour, which
+        is correct for backtests and acceptable for paper.
+        """
+        self.broker_exposure = exposure
+
+    def update_broker_exposure(self, view: ExposureView) -> None:
+        """Refresh the broker view. No-op if none is attached."""
+        if self.broker_exposure is not None:
+            self.broker_exposure.update(view)
+
+    def exposure_breaches(self) -> List:
+        """Limits that broker exposure already exceeds, if a view is attached."""
+        if self.broker_exposure is None:
+            return []
+        return self.broker_exposure.breaches()
+
     def reserve_exposure(self, asset: str, notional: float) -> bool:
-        """Reserve exposure for an accepted order if limits allow it."""
+        """Reserve exposure for an accepted order if limits allow it.
+
+        When a broker view is attached it decides. The local projection is
+        still updated so existing callers keep working, but it is no longer
+        what grants permission.
+        """
         if notional <= 0:
             return False
+
+        if self.broker_exposure is not None:
+            allowed, reason = self.broker_exposure.may_acquire(asset, notional)
+            if not allowed:
+                logger.warning(
+                    "Refusing to reserve %.2f of %s: %s", notional, asset, reason
+                )
+                return False
+            self.asset_exposure[asset] = round(
+                self.asset_exposure.get(asset, 0.0) + notional, 2
+            )
+            return True
 
         current_exposure = self.asset_exposure.get(asset, 0.0)
         total_exposure = sum(self.asset_exposure.values())
@@ -396,6 +456,20 @@ class RiskManager:
         # Check for risk events
         self._check_risk_events()
 
+    def attach_durable_anchors(self, anchors: DurableRiskAnchors) -> None:
+        """Make loss and drawdown limits survive a restart.
+
+        ATOS-P1-RISK-002. Once attached, an active trip blocks trading even
+        though the in-memory counters were cleared by the restart.
+        """
+        self.durable_anchors = anchors
+
+    def active_risk_trips(self) -> List[str]:
+        """Names of trips currently blocking trading."""
+        if self.durable_anchors is None:
+            return []
+        return self.durable_anchors.active_trips
+
     def check_risk_limits(self, asset: str) -> bool:
         """
         Check if trading should be allowed based on risk limits.
@@ -407,6 +481,14 @@ class RiskManager:
             True if trading is allowed, False otherwise
         """
         self._check_daily_reset()
+
+        # ATOS-P1-RISK-002: a durable trip outranks the in-memory counters.
+        # Those counters were reset by the restart; the trip was not.
+        if self.durable_anchors is not None:
+            allowed, reason = self.durable_anchors.may_trade()
+            if not allowed:
+                self._log_risk_event(RiskEvent.DRAWDOWN_LIMIT, reason)
+                return False
 
         # Daily drawdown check
         if abs(self.daily_pnl) >= self.capital * self.config.max_daily_drawdown and self.daily_pnl < 0:
@@ -542,8 +624,14 @@ class RiskManager:
             # VaR and Expected Shortfall
             sorted_returns = sorted(returns)
             var_index = int(len(sorted_returns) * 0.05)
-            metrics.var_95 = abs(sorted_returns[var_index]) if var_index < len(sorted_returns) else 0
-            metrics.expected_shortfall = abs(np.mean(sorted_returns[:var_index + 1])) if var_index > 0 else 0
+            metrics.var_95 = (
+                float(abs(sorted_returns[var_index]))
+                if var_index < len(sorted_returns) else 0.0
+            )
+            metrics.expected_shortfall = (
+                float(abs(np.mean(sorted_returns[:var_index + 1])))
+                if var_index > 0 else 0.0
+            )
 
         return metrics
 
