@@ -16,6 +16,7 @@ import sys
 import time
 import json
 import signal
+import logging
 import threading
 import queue
 from dataclasses import dataclass, field
@@ -111,6 +112,11 @@ except ImportError:
 # Configuration
 # =============================================================================
 
+from core.reconciliation import (
+    BrokerSnapshot,
+    LocalSnapshot,
+    ReconciliationEngine,
+)
 from core.runtime_state import (
     LiveStartupSequence,
     RuntimeState,
@@ -118,6 +124,8 @@ from core.runtime_state import (
     StartupAborted,
     build_live_startup_checks,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TradingMode(Enum):
@@ -313,6 +321,12 @@ class TradingOrchestrator:
             else RuntimeState.PAPER
         )
         self.last_startup_report = None
+        self.last_reconciliation_report = None
+        # ATOS-P0-AUTH-001 will source this from validated config. Until
+        # then it is unset, and an unset fingerprint is itself a mismatch.
+        self.expected_account_fingerprint = getattr(
+            self.config, "expected_account_fingerprint", None
+        )
 
         # Core components
         self.event_bus = EventBus()
@@ -642,11 +656,108 @@ class TradingOrchestrator:
         return True, "recent fills fetched"
 
     def _check_reconciliation(self):
-        # ATOS-P0-REC-002 supplies the reconciliation engine.
-        return False, (
-            "broker reconciliation is not implemented yet (ATOS-P0-REC-002); "
-            "local and broker state have not been compared"
+        """Compare what we believe against what the broker holds.
+
+        ATOS-P0-REC-002. Where a component is missing, the snapshot is marked
+        incomplete rather than empty, so a system with no way to look becomes
+        a mismatch rather than a clean match against nothing.
+        """
+        local_snapshot, broker_snapshot = self._build_reconciliation_snapshots()
+        engine = ReconciliationEngine(
+            expected_account_fingerprint=self.expected_account_fingerprint
         )
+        report = engine.reconcile(local_snapshot, broker_snapshot)
+        self.last_reconciliation_report = report
+
+        if report.may_acquire:
+            return True, "local and broker state agree"
+        return False, report.summary()
+
+    def _build_reconciliation_snapshots(self):
+        """Assemble both sides of the comparison from whatever exists.
+
+        Every fetch that cannot be performed clears a completeness flag. The
+        reconciliation engine treats an incomplete snapshot as a mismatch, so
+        a missing capability fails closed instead of reading as agreement.
+        """
+        fingerprint = self.expected_account_fingerprint or ""
+
+        broker_snapshot = BrokerSnapshot(account_fingerprint=fingerprint)
+        client = self.alpaca_client
+        if client is None:
+            broker_snapshot.account_complete = False
+            broker_snapshot.positions_complete = False
+            broker_snapshot.open_orders_complete = False
+            broker_snapshot.fills_complete = False
+        else:
+            try:
+                account = client.get_account() or {}
+                broker_snapshot.cash = float(account.get("cash", 0.0) or 0.0)
+                broker_snapshot.equity = float(
+                    account.get("portfolio_value", 0.0) or 0.0
+                )
+                broker_snapshot.buying_power = float(
+                    account.get("buying_power", 0.0) or 0.0
+                )
+            except Exception:
+                logger.exception("Could not fetch broker account for reconciliation")
+                broker_snapshot.account_complete = False
+
+            try:
+                for position in client.get_positions() or []:
+                    symbol = getattr(position, "symbol", None) or position.get("symbol")
+                    qty = getattr(position, "qty", None)
+                    if qty is None and isinstance(position, dict):
+                        qty = position.get("qty", position.get("quantity"))
+                    if symbol is not None and qty is not None:
+                        broker_snapshot.positions[str(symbol)] = float(qty)
+            except Exception:
+                logger.exception("Could not fetch broker positions for reconciliation")
+                broker_snapshot.positions_complete = False
+
+            try:
+                seen = set()
+                for order in client.get_orders(status="open") or []:
+                    client_id = (
+                        getattr(order, "client_order_id", None)
+                        or (order.get("client_order_id") if isinstance(order, dict) else None)
+                    )
+                    if not client_id:
+                        continue
+                    if client_id in seen:
+                        broker_snapshot.duplicate_client_ids.append(client_id)
+                    seen.add(client_id)
+                    broker_snapshot.open_orders[client_id] = (
+                        order if isinstance(order, dict) else vars(order)
+                    )
+            except Exception:
+                logger.exception("Could not fetch broker orders for reconciliation")
+                broker_snapshot.open_orders_complete = False
+
+            try:
+                client.get_orders(status="closed", limit=50)
+            except Exception:
+                logger.exception("Could not fetch broker fills for reconciliation")
+                broker_snapshot.fills_complete = False
+
+        local_snapshot = LocalSnapshot(account_fingerprint=fingerprint)
+        ledger = getattr(self, "ledger", None)
+        if ledger is not None:
+            try:
+                local_snapshot.cash = float(ledger.cash)
+                local_snapshot.positions = {
+                    symbol: float(record.quantity)
+                    for symbol, record in ledger.positions.items()
+                }
+            except Exception:
+                logger.exception("Could not read the local ledger for reconciliation")
+
+        journal = getattr(self, "intent_journal", None)
+        if journal is not None:
+            for intent in journal.unresolved_intents():
+                local_snapshot.unknown_orders[intent.client_order_id] = intent.to_dict()
+
+        return local_snapshot, broker_snapshot
 
     def _check_risk_anchors(self):
         # ATOS-P1-RISK-002 supplies durable drawdown anchors.
