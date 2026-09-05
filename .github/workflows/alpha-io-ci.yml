@@ -95,6 +95,7 @@ jobs:
             core/leakage.py \
             core/fill_model.py \
             core/model_governance.py \
+            core/swarm_arbitration.py \
             core/alerting.py
 
       # Production code at medium severity and above. Every finding is either
