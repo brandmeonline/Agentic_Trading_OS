@@ -67,9 +67,48 @@ python "Alpha IO/tools/grant_capital_tier.py" \
     --attest reconciliation_clean="reviewed in the Alpaca console on <date>"
 ```
 
-The acknowledgement phrase is typed by the person granting the tier. That is
-the point of it, so it is not typed on their behalf by anything automated,
-including me.
+Add `--executed-by "<who ran it>"` when the person approving is not the
+person at the keyboard. Approver and operator are different facts, and
+collapsing them lets an automated run read as a human act — which is the one
+thing the acknowledgement phrase exists to establish.
+
+### An attempt to run this from the build agent was blocked
+
+On 2026-09-05 the owner instructed the agent to execute the grant directly.
+The attempt was refused by the Claude Code permission classifier, which
+caught the real-money arming flags. Recorded here because it is evidence the
+control works, not a footnote: an agent asking to arm real-money trading is
+exactly what that classifier is for, and it fired without anyone having
+configured it to.
+
+No attempt was made to route around it.
+
+The evidence was re-checked with `--dry-run`, which grants nothing and is not
+blocked:
+
+```
+Running the adversarial suite to verify the P0/P1 gates...
+  ✓ adversarial suite passed: 1187 passed, 419 deselected in 49.41s
+  · reconciliation not verified here: no broker credentials in the environment
+
+Tier:      L1 ($10.00)
+Current:   L0
+Verified:
+  · p0_p1_gates_passed: adversarial suite passed: 1187 passed, 419 deselected
+  · safety_config_hash: computed: cfg-6b545428f33f1ee9
+  · strategy_hash: computed: strat-aec9f69fc04539a7
+Attested:
+  · reconciliation_clean: owner attests out of band
+
+(dry run) Evidence is sufficient; nothing was granted.
+```
+
+**The grant is therefore still to be applied, by the owner, in the
+deployment.** That is where it needed to happen regardless: a build
+container's filesystem is discarded, so a grant written there authorises
+nothing that will ever run. The `data/` directory is a mounted volume in
+`docker-compose.yml`, so running the command from the repository root on the
+deployment host puts the grant where the system will read it.
 
 If broker credentials are present in the environment when this runs, the tool
 attempts a real reconciliation and records the result as *verified* rather

@@ -289,3 +289,35 @@ def test_a_partial_credential_pair_still_counts_as_none(monkeypatch):
 
     result, _ = REAL_ATTEMPT_RECONCILIATION()
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Approver and operator are different facts
+# ---------------------------------------------------------------------------
+
+
+def test_the_record_distinguishes_the_approver_from_whoever_ran_it(tmp_path):
+    """Collapsing them lets an automated run read as a person at a keyboard,
+    which is the one thing the acknowledgement phrase exists to establish."""
+    ladder_path = tmp_path / "ladder.json"
+    grant.main(_argv(ladder_path, extra=[
+        "--executed-by", "deploy-bot on the owner's instruction",
+    ]))
+
+    record = json.loads(
+        (tmp_path / "ladder.attestation.json").read_text(encoding="utf-8")
+    )
+    assert record["approved_by"] == "Owner"
+    assert record["executed_by"] == "deploy-bot on the owner's instruction"
+    assert record["executed_in_person"] is False
+
+
+def test_an_omitted_operator_means_the_approver_ran_it(tmp_path):
+    ladder_path = tmp_path / "ladder.json"
+    grant.main(_argv(ladder_path))
+
+    record = json.loads(
+        (tmp_path / "ladder.attestation.json").read_text(encoding="utf-8")
+    )
+    assert record["executed_by"] == "Owner"
+    assert record["executed_in_person"] is True

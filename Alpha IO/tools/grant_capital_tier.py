@@ -256,6 +256,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Target tier, e.g. L1. Rungs are not skipped.")
     parser.add_argument("--approved-by", required=True,
                         help="The person granting this. Recorded in the grant.")
+    parser.add_argument("--executed-by", default=None,
+                        help="Who ran this command, if not the approver in "
+                             "person. An agent or a deploy script acting on "
+                             "an owner's instruction says so here, so the "
+                             "record does not imply the approver typed the "
+                             "acknowledgement themselves.")
     parser.add_argument("--ladder", default="data/capital_ladder.json",
                         help="Where the persisted grant lives")
     parser.add_argument("--safety-config", default=None,
@@ -388,6 +394,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "tier": target.name,
         "max_capital_at_risk": target.max_capital,
         "approved_by": args.approved_by,
+        # Who approved and who ran the command are different facts. Collapsing
+        # them lets an automated run read as a person at a keyboard, which is
+        # the one thing the acknowledgement phrase exists to establish.
+        "executed_by": args.executed_by or args.approved_by,
+        "executed_in_person": args.executed_by is None,
         "granted_at": datetime.now(timezone.utc).isoformat(),
         "safety_config_hash": config_hash,
         "strategy_hash": strat_hash,
@@ -402,6 +413,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print(f"\n✓ {target.name} granted: ${target.max_capital:,.2f} maximum real "
           f"capital at risk.")
+    if args.executed_by:
+        print(f"  Approved by: {args.approved_by}")
+        print(f"  Executed by: {args.executed_by} (not the approver in person)")
     print(f"  Grant:       {args.ladder}")
     print(f"  Attestation: {sidecar}")
     if attested:
