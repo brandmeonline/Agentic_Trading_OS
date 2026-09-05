@@ -119,6 +119,11 @@ from core.reconciliation import (
     LocalSnapshot,
     ReconciliationEngine,
 )
+from core.capital_ladder import (
+    CapitalLadder,
+    LadderStore,
+    spend_authority,
+)
 from core.readiness import (
     ReadinessReport,
     evaluate_readiness,
@@ -179,6 +184,10 @@ class OrchestratorConfig:
     enable_websocket: bool = True
     enable_strategies: bool = True
     enable_rl_agent: bool = False  # Disabled by default (resource intensive)
+
+    # ATOS-P3-CAP-001. Where the persisted capital grant lives. Unset means
+    # no grant, which means no real capital - not a default allowance.
+    capital_ladder_path: Optional[str] = None
 
     # API settings
     # Loopback by default. The control plane authenticates unconditionally
@@ -343,6 +352,14 @@ class TradingOrchestrator:
             else RuntimeState.RESEARCH if self.config.mode == TradingMode.RESEARCH
             else RuntimeState.PAPER
         )
+        # ATOS-P3-CAP-001. The persisted grant, if one exists. Absent, the
+        # system has no spend authority at all, which is the correct default
+        # for a process nobody has authorised.
+        ladder_path = getattr(self.config, "capital_ladder_path", None)
+        self.capital_ladder: Optional[CapitalLadder] = (
+            CapitalLadder(LadderStore(ladder_path)) if ladder_path else None
+        )
+
         self.last_startup_report = None
         self.last_reconciliation_report = None
         self.last_authorization_decision = None
@@ -856,10 +873,20 @@ class TradingOrchestrator:
         return True, "live data manager attached"
 
     def _check_capital_tier(self):
-        # ATOS-P3-CAP-001 supplies the persisted promotion ladder.
-        return False, (
-            "no persisted capital tier (ATOS-P3-CAP-001); initial_capital is a "
-            "number, not spend authority"
+        """ATOS-P3-CAP-001: spend authority comes from the persisted ladder.
+
+        initial_capital is a number in a config file. It can lower the amount
+        risked and can never raise it, and with no ladder attached the answer
+        is zero.
+        """
+        allowed, reason = spend_authority(
+            self.capital_ladder, self.config.initial_capital
+        )
+        if allowed <= 0:
+            return False, reason or "no capital tier authorises real capital"
+        tier = self.capital_ladder.tier.name if self.capital_ladder else "none"
+        return True, f"{tier} authorises {allowed:,.2f}" + (
+            f" ({reason})" if reason else ""
         )
 
     # -- readiness --------------------------------------------------------
