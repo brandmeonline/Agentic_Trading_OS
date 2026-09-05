@@ -17,6 +17,11 @@ import time
 from collections import deque
 
 from core.ledger import TradingLedger
+from core.order_intent import (
+    IntentPersistenceError,
+    OrderIntent,
+    OrderIntentJournal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -503,10 +508,19 @@ class ExecutionEngine:
         config: Optional[ExecutionConfig] = None,
         ledger: Optional[TradingLedger] = None,
         broker_adapter: Optional[Any] = None,
+        intent_journal: Optional[OrderIntentJournal] = None,
+        session_id: Optional[str] = None,
     ):
         self.config = config or ExecutionConfig()
         self.ledger = ledger
         self.broker_adapter = broker_adapter
+        # ATOS-P0-EXEC-002: the write-ahead log of orders that may exist.
+        # Live mode without one is refused in submit_order, because a crash
+        # between intent and submission would leave nothing to recover from.
+        self.intent_journal = intent_journal
+        self.session_id = session_id or (
+            intent_journal.session_id if intent_journal else f"session-{uuid.uuid4()}"
+        )
 
         # Order management
         self.orders: Dict[str, Order] = {}
@@ -519,6 +533,7 @@ class ExecutionEngine:
         self.total_orders: int = 0
         self.filled_orders: int = 0
         self.rejected_orders: int = 0
+        self.intent_persistence_failures: int = 0
         self.total_slippage: float = 0.0
         self.total_volume: float = 0.0
 
@@ -624,9 +639,55 @@ class ExecutionEngine:
                 message="Invalid quantity"
             )
 
+        # ATOS-P0-EXEC-002: the intent must be durable before anything can
+        # create a real order. If this write fails in live mode we do not
+        # submit, because a crash would leave no record that the broker might
+        # be holding the order.
+        is_live = not self.config.simulation_mode
+        if is_live:
+            if self.intent_journal is None:
+                order.transition_to(
+                    OrderStatus.REJECTED,
+                    "live execution requires a durable order intent journal",
+                )
+                self.rejected_orders += 1
+                self._mark_ledger_status(order)
+                return ExecutionResult(
+                    success=False,
+                    order=order,
+                    message=(
+                        "Refusing to submit: live execution requires a durable "
+                        "order intent journal (ATOS-P0-EXEC-002)."
+                    ),
+                )
+            try:
+                self._persist_intent(order)
+            except IntentPersistenceError as exc:
+                # Nothing reached the broker, so no exposure exists. The order
+                # is provably refused - but the persistence failure itself is
+                # an operational fault, surfaced here and escalated to a
+                # trading freeze by ATOS-P1-PERSIST-001.
+                logger.error(
+                    "Refusing to submit order %s: intent could not be persisted (%s)",
+                    order.id, exc,
+                )
+                self.intent_persistence_failures += 1
+                order.transition_to(
+                    OrderStatus.REJECTED, f"intent persistence failed: {exc}"
+                )
+                self.rejected_orders += 1
+                return ExecutionResult(
+                    success=False,
+                    order=order,
+                    message=(
+                        "Refusing to submit: the order intent could not be durably "
+                        f"recorded ({exc}). No order was sent."
+                    ),
+                )
+
         # ATOS-P0-EXEC-001: intent first, then in-flight. The old code jumped
         # straight to SUBMITTED, asserting a broker acknowledgement that had
-        # not happened yet. ATOS-P0-EXEC-002 makes the intent write durable.
+        # not happened yet.
         if order.can_transition_to(OrderStatus.INTENT_PERSISTED):
             order.transition_to(OrderStatus.INTENT_PERSISTED, "order intent recorded")
         if order.can_transition_to(OrderStatus.SUBMITTING):
@@ -646,6 +707,65 @@ class ExecutionEngine:
 
         result.latency_ms = (time.time() - start_time) * 1000
         return result
+
+    def _persist_intent(self, order: Order) -> OrderIntent:
+        """Write the order intent to the journal before any broker call.
+
+        Raises IntentPersistenceError if the write does not reach stable
+        storage, in which case the caller must not submit.
+        """
+        notional = None
+        reference_price = order.price or self.get_price(order.asset)
+        if reference_price:
+            notional = abs(order.quantity * reference_price)
+
+        intent = OrderIntent(
+            client_order_id=order.client_order_id,
+            internal_order_id=order.id,
+            session_id=self.session_id,
+            instrument=order.asset,
+            side=order.side.value,
+            quantity=order.quantity,
+            order_type=order.order_type.value,
+            status=OrderStatus.INTENT_PERSISTED.value,
+            price=order.price,
+            stop_price=order.stop_price,
+            notional=notional,
+            # The worst case this order can add if it fills completely. Risk
+            # recovery needs the number the engine approved, not one
+            # recomputed later against different prices or config.
+            expected_max_exposure_delta=notional,
+            risk_approval_hash=getattr(order, "risk_approval_hash", None),
+            strategy=order.strategy,
+            signal_id=order.signal_id,
+        )
+        return self.intent_journal.record_intent(intent)
+
+    def _journal_transition(self, order: Order, reason: str) -> None:
+        """Mirror a lifecycle change into the durable journal.
+
+        A journal write failure here is logged but does not raise: the order
+        already exists at the broker, and throwing would lose the in-memory
+        state too. The counter makes the gap visible, and
+        ATOS-P1-PERSIST-001 turns a critical write failure into a freeze.
+        """
+        if self.intent_journal is None:
+            return
+        try:
+            self.intent_journal.record_transition(
+                client_order_id=order.client_order_id,
+                to_status=order.status.value,
+                reason=reason,
+                filled_quantity=order.filled_quantity,
+                broker_order_id=order.broker_order_id,
+            )
+        except IntentPersistenceError as exc:
+            self.intent_persistence_failures += 1
+            logger.error(
+                "Order %s reached %s but the journal write failed (%s). Local "
+                "state and durable state now disagree; reconcile before adding risk.",
+                order.id, order.status.name, exc,
+            )
 
     def _execute_immediate(self, order: Order) -> ExecutionResult:
         """Execute order immediately at market."""
@@ -869,6 +989,12 @@ class ExecutionEngine:
         if had_new_fill:
             self._update_position(order)
             self._record_ledger_fill(order)
+            # ATOS-P0-EXEC-002: journal the fill directly. _record_ledger_fill
+            # is a no-op without a ledger, and the durable lifecycle record
+            # must not depend on that optional projection.
+            self._journal_transition(
+                order, f"fill: cumulative {order.filled_quantity} of {order.quantity}"
+            )
             if order.status is OrderStatus.FILLED:
                 self.filled_orders += 1
             self.total_volume += newly_filled
@@ -1206,9 +1332,17 @@ class ExecutionEngine:
         self._sync_positions_from_ledger()
 
     def _mark_ledger_status(self, order: Order) -> None:
-        """Mirror order status to the canonical ledger."""
+        """Mirror order status to the canonical ledger and the intent journal.
+
+        ATOS-P0-EXEC-002 requires every lifecycle transition to be persisted,
+        not only the terminal one: recovery reconstructs what may exist from
+        this history.
+        """
         if self.ledger:
             self.ledger.mark_order_status(order.id, order.status.value)
+        # Journalled unconditionally: the ledger is a projection, the journal
+        # is the durable record recovery reads.
+        self._journal_transition(order, order.ambiguity_reason or "lifecycle update")
 
     def _sync_positions_from_ledger(self) -> None:
         """Keep the legacy position cache aligned with the canonical ledger."""

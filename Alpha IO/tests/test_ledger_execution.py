@@ -1,4 +1,5 @@
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -11,6 +12,16 @@ from core.execution import (
     OrderType,
 )
 from core.ledger import TradingLedger
+from core.order_intent import OrderIntentJournal
+
+
+def _journal():
+    """A throwaway durable intent journal.
+
+    ATOS-P0-EXEC-002: live mode refuses to submit without one, so every
+    live-mode engine in these tests must supply it.
+    """
+    return OrderIntentJournal(str(Path(tempfile.mkdtemp()) / "intents.sqlite"))
 
 
 def test_ledger_tracks_cash_positions_and_realized_pnl():
@@ -289,6 +300,7 @@ def test_live_execution_adapter_records_fills_in_ledger():
         ExecutionConfig(simulation_mode=False),
         ledger=ledger,
         broker_adapter=adapter,
+        intent_journal=_journal(),
     )
 
     order = engine.create_order("ETH/USD", OrderSide.BUY, 2, OrderType.MARKET)
@@ -310,6 +322,7 @@ def test_live_execution_without_adapter_fails_closed():
     engine = ExecutionEngine(
         ExecutionConfig(simulation_mode=False),
         ledger=ledger,
+        intent_journal=_journal(),
     )
 
     order = engine.create_order("ETH/USD", OrderSide.BUY, 2, OrderType.MARKET)
@@ -357,6 +370,7 @@ def test_alpaca_execution_adapter_maps_client_order_response():
         ExecutionConfig(simulation_mode=False),
         ledger=ledger,
         broker_adapter=adapter,
+        intent_journal=_journal(),
     )
 
     order = engine.create_order("BTC/USD", OrderSide.BUY, 1, OrderType.LIMIT, price=102)
@@ -392,6 +406,7 @@ def test_execution_engine_reconciles_ledger_with_broker_adapter_positions():
         ExecutionConfig(simulation_mode=False),
         ledger=ledger,
         broker_adapter=FakeBrokerAdapter(),
+        intent_journal=_journal(),
     )
 
     report = engine.reconcile_with_broker()

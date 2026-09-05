@@ -73,6 +73,7 @@ jobs:
             "Alpha IO/tests/test_llm_client.py" \
             "Alpha IO/tests/test_market_view.py" \
             "Alpha IO/tests/test_news_feed.py" \
+            "Alpha IO/tests/test_order_intent_wal.py" \
             "Alpha IO/tests/test_order_lifecycle_adversarial.py" \
             "Alpha IO/tests/test_pipeline_and_eval.py" \
             "Alpha IO/tests/test_plan_milestones.py" \

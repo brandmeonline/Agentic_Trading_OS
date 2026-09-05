@@ -16,6 +16,7 @@ Marked ``adversarial`` so CI can select the suite (ATOS-P2-CI-001).
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from core.execution import (  # noqa: E402
     OrderStatus,
     OrderType,
 )
+from core.order_intent import OrderIntentJournal  # noqa: E402
 
 pytestmark = pytest.mark.adversarial
 
@@ -64,12 +66,23 @@ class ScriptedBroker:
         return True
 
 
-def engine_with(script):
-    """A live-mode engine wired to a scripted broker."""
+def engine_with(script, journal=True):
+    """A live-mode engine wired to a scripted broker.
+
+    Live mode requires a durable intent journal (ATOS-P0-EXEC-002), so one is
+    provided on a throwaway path unless a test is specifically exercising its
+    absence.
+    """
     broker = ScriptedBroker(script)
+    intent_journal = None
+    if journal:
+        intent_journal = OrderIntentJournal(
+            str(Path(tempfile.mkdtemp()) / "intents.sqlite")
+        )
     engine = ExecutionEngine(
         config=ExecutionConfig(simulation_mode=False),
         broker_adapter=broker,
+        intent_journal=intent_journal,
     )
     return engine, broker
 
