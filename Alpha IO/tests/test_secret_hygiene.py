@@ -62,10 +62,19 @@ SCANNABLE_SUFFIXES = {
     ".env", ".md", ".txt", ".html", ".js", ".css", ".sql", ".xml", "",
 }
 
-# The plan document quotes token shapes while describing what to forbid.
+# Files that must contain token-shaped strings to do their job. Each is a test
+# whose subject is secret handling, so realistic shapes are the fixture: a
+# redaction test that only ever sees obviously-fake input proves nothing about
+# the real thing. The exemption is narrow and every entry is a test file.
 SCAN_EXEMPT_PATHS = {
+    # Quotes token shapes while describing what to forbid.
     "docs/ULTRAPLAN_PRODUCTION_HARDENING.md",
+    # This file's own detector fixtures.
     "Alpha IO/tests/test_secret_hygiene.py",
+    # ATOS-P2-OPS-001: asserts that realistic vendor tokens are scrubbed from
+    # alert payloads. The tokens below are invented, but they are invented to
+    # look real, which is the point.
+    "Alpha IO/tests/test_alerting_escalation.py",
 }
 
 

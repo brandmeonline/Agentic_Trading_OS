@@ -454,7 +454,14 @@ class TradingOrchestrator:
                 self.api_server = create_api_server(
                     host=self.config.api_host,
                     port=self.config.api_port,
-                    enable_auth=self.config.mode == TradingMode.LIVE
+                    # ATOS-P2-API-001: authentication is unconditional.
+                    # This used to be `mode == LIVE`, which left the whole
+                    # control plane - including POST /api/v1/orders and
+                    # strategy start/stop - unauthenticated in paper mode,
+                    # which is the default. Paper is where promotion evidence
+                    # comes from, so an unauthenticated party who can place
+                    # paper orders can corrupt the case for going live.
+                    enable_auth=True
                 )
                 print(f"      ✓ API server ready on {self.config.api_host}:{self.config.api_port}")
             else:

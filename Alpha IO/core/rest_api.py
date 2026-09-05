@@ -51,7 +51,10 @@ class RateLimitTier(Enum):
 @dataclass
 class APIConfig:
     """API server configuration."""
-    host: str = "0.0.0.0"
+    # ATOS-P2-API-001: loopback by default. Binding every interface is a
+    # deliberate act that should accompany an external network control, not
+    # something inherited from a default.
+    host: str = "127.0.0.1"
     port: int = 8080
     debug: bool = False
     enable_cors: bool = True
@@ -1011,7 +1014,7 @@ class WebSocketHandler:
 # =============================================================================
 
 def create_api_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
     enable_auth: bool = True,
     trading_system: Any = None
