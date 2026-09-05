@@ -7,12 +7,19 @@ risk controls, and real-time exposure monitoring.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import deque
 from enum import Enum
+
+
+from core.exposure import BrokerAuthoritativeExposure, ExposureView
+
+logger = logging.getLogger(__name__)
 
 
 class RiskLevel(Enum):
@@ -127,6 +134,13 @@ class RiskManager:
         # Position tracking
         self.positions: Dict[str, Position] = {}
         self.asset_exposure: Dict[str, float] = {}
+
+        # ATOS-P1-RISK-001: local asset_exposure above is a projection. When a
+        # broker view is attached it becomes authoritative for pre-trade
+        # decisions, because a projection cannot see a manual trade, a fill
+        # received while we were down, or a price move on a position we did
+        # not touch.
+        self.broker_exposure: Optional[BrokerAuthoritativeExposure] = None
 
         # Volatility tracking
         self.returns_history: deque = deque(maxlen=self.config.volatility_lookback)
@@ -302,10 +316,49 @@ class RiskManager:
         """
         return self.calculate_position_size(asset, confidence, entry_price, stop_loss_pct)
 
+    def attach_broker_exposure(
+        self, exposure: BrokerAuthoritativeExposure
+    ) -> None:
+        """Make broker truth authoritative for pre-trade decisions.
+
+        ATOS-P1-RISK-001. Once attached, reserve_exposure consults it first.
+        Without it the manager keeps its previous local-only behaviour, which
+        is correct for backtests and acceptable for paper.
+        """
+        self.broker_exposure = exposure
+
+    def update_broker_exposure(self, view: ExposureView) -> None:
+        """Refresh the broker view. No-op if none is attached."""
+        if self.broker_exposure is not None:
+            self.broker_exposure.update(view)
+
+    def exposure_breaches(self) -> List:
+        """Limits that broker exposure already exceeds, if a view is attached."""
+        if self.broker_exposure is None:
+            return []
+        return self.broker_exposure.breaches()
+
     def reserve_exposure(self, asset: str, notional: float) -> bool:
-        """Reserve exposure for an accepted order if limits allow it."""
+        """Reserve exposure for an accepted order if limits allow it.
+
+        When a broker view is attached it decides. The local projection is
+        still updated so existing callers keep working, but it is no longer
+        what grants permission.
+        """
         if notional <= 0:
             return False
+
+        if self.broker_exposure is not None:
+            allowed, reason = self.broker_exposure.may_acquire(asset, notional)
+            if not allowed:
+                logger.warning(
+                    "Refusing to reserve %.2f of %s: %s", notional, asset, reason
+                )
+                return False
+            self.asset_exposure[asset] = round(
+                self.asset_exposure.get(asset, 0.0) + notional, 2
+            )
+            return True
 
         current_exposure = self.asset_exposure.get(asset, 0.0)
         total_exposure = sum(self.asset_exposure.values())

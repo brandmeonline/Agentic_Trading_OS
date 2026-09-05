@@ -86,6 +86,7 @@ jobs:
             "Alpha IO/tests/test_reports_scheduler.py" \
             "Alpha IO/tests/test_rest_api_security.py" \
             "Alpha IO/tests/test_risk.py" \
+            "Alpha IO/tests/test_risk_reservations.py" \
             "Alpha IO/tests/test_run_web_security.py" \
             "Alpha IO/tests/test_secret_hygiene.py" \
             "Alpha IO/tests/test_services.py" \
