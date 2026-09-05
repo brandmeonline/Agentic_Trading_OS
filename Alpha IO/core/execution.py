@@ -234,6 +234,10 @@ class Order:
     transitions: List[Dict] = field(default_factory=list)
     #: Why the order is ambiguous, when it is.
     ambiguity_reason: Optional[str] = None
+    #: How many times the broker was asked to resolve this order.
+    resolution_attempts: int = 0
+    #: How many times submission was attempted for this client order ID.
+    submit_attempts: int = 0
 
     # Timing
     created_at: datetime = field(default_factory=datetime.now)
@@ -428,7 +432,14 @@ class AlpacaExecutionAdapter:
         self._external_order_ids: Dict[str, str] = {}
 
     def submit_order(self, order: Order) -> Dict[str, Any]:
-        """Place an execution order through Alpaca and normalize the response."""
+        """Place an execution order through Alpaca and normalize the response.
+
+        ATOS-P0-EXEC-003: the broker is given ``order.client_order_id`` - the
+        full stable UUID - not ``order.id``, which is an eight-character slice.
+        The idempotency key has to be the one we can prove unique and can
+        reproduce after a restart, otherwise a lookup after a lost response
+        may match somebody else's order or none at all.
+        """
         alpaca_order = self.client.place_order(
             symbol=order.asset,
             qty=order.quantity,
@@ -437,13 +448,32 @@ class AlpacaExecutionAdapter:
             time_in_force=self.default_time_in_force,
             limit_price=order.price,
             stop_price=order.stop_price,
-            client_order_id=order.id,
+            client_order_id=order.client_order_id,
         )
         response = self._order_to_response(alpaca_order)
         external_order_id = response.get("external_order_id")
         if external_order_id:
             self._external_order_ids[order.id] = external_order_id
+            self._external_order_ids[order.client_order_id] = external_order_id
         return response
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> Optional[Dict[str, Any]]:
+        """Ask the broker what became of the order carrying this client ID.
+
+        Returns None only when the broker positively reports no such order.
+        Any failure to reach the broker propagates, because "I could not ask"
+        must never be read as "there is nothing there".
+        """
+        lookup = getattr(self.client, "get_order_by_client_order_id", None)
+        if not callable(lookup):
+            raise NotImplementedError(
+                "broker client cannot look orders up by client order ID; "
+                "an ambiguous order cannot be safely resolved"
+            )
+        found = lookup(client_order_id)
+        if found is None:
+            return None
+        return self._order_to_response(found)
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel by external broker order id when known."""
@@ -462,8 +492,13 @@ class AlpacaExecutionAdapter:
     def _order_to_response(self, alpaca_order: Any) -> Dict[str, Any]:
         """Normalize an Alpaca order dataclass/object for ExecutionEngine."""
         data = self._to_dict(alpaca_order)
+        external_order_id = data.get("order_id") or data.get("id")
         return {
-            "external_order_id": data.get("order_id") or data.get("id"),
+            "external_order_id": external_order_id,
+            # The engine reads "broker_order_id"; emitting only
+            # "external_order_id" meant the broker's own identifier was
+            # silently dropped, leaving nothing to reconcile against.
+            "broker_order_id": external_order_id,
             "client_order_id": data.get("client_order_id"),
             "symbol": data.get("symbol"),
             "side": data.get("side"),
@@ -628,6 +663,39 @@ class ExecutionEngine:
         algo = algo or self.config.default_algo
         start_time = time.time()
 
+        # ATOS-P0-EXEC-003: never resubmit an order whose broker state is
+        # unknown. The broker may already be working it; a second submission
+        # would create a second economic position. Resolution goes through
+        # resolve_ambiguous_order(), which asks by client order ID.
+        if order.is_ambiguous:
+            logger.error(
+                "Refusing to resubmit order %s (client id %s): state is %s. "
+                "Resolve it against the broker first.",
+                order.id, order.client_order_id, order.status.name,
+            )
+            return ExecutionResult(
+                success=False,
+                order=order,
+                message=(
+                    f"Refusing to resubmit: order state is {order.status.name}. "
+                    "Resolve it by client order ID before retrying "
+                    "(ATOS-P0-EXEC-003)."
+                ),
+            )
+
+        # A terminal order is finished. Resubmitting one is a caller bug that
+        # would duplicate exposure.
+        if order.status in TERMINAL_ORDER_STATES:
+            return ExecutionResult(
+                success=False,
+                order=order,
+                message=(
+                    f"Refusing to resubmit: order is already {order.status.name}."
+                ),
+            )
+
+        order.submit_attempts += 1
+
         # Validate order
         if order.quantity <= 0:
             order.transition_to(OrderStatus.REJECTED, "local validation: invalid quantity")
@@ -766,6 +834,134 @@ class ExecutionEngine:
                 "state and durable state now disagree; reconcile before adding risk.",
                 order.id, order.status.name, exc,
             )
+
+    def resolve_ambiguous_order(self, order: Order) -> ExecutionResult:
+        """Ask the broker what became of an order whose state we lost.
+
+        ATOS-P0-EXEC-003. This is the only sanctioned way out of UNKNOWN. It
+        asks by client order ID - the key the broker was given before the
+        network call - so the answer is about *our* order and no other.
+
+        Three outcomes:
+
+        * the broker has it -> attach to it, adopt its state, no new order;
+        * the broker positively reports no such order -> the submission never
+          landed, and only then may the order be resubmitted;
+        * we cannot ask, or the answer disagrees with our intent -> the order
+          stays ambiguous and escalates to RECONCILIATION_REQUIRED.
+
+        A failure to reach the broker is never read as absence.
+        """
+        lookup = getattr(self.broker_adapter, "get_order_by_client_order_id", None)
+        if not callable(lookup):
+            order.mark_ambiguous(
+                "broker adapter cannot look up by client order ID",
+                OrderStatus.RECONCILIATION_REQUIRED,
+            )
+            self._mark_ledger_status(order)
+            return ExecutionResult(
+                success=False, order=order,
+                message=(
+                    "Cannot resolve this order: the adapter has no lookup by "
+                    "client order ID. Resolve manually before adding risk."
+                ),
+            )
+
+        self._record_resolution_attempt(order)
+        try:
+            found = lookup(order.client_order_id)
+        except Exception as exc:
+            logger.exception(
+                "Lookup of client order ID %s failed; the order stays UNKNOWN",
+                order.client_order_id,
+            )
+            order.mark_ambiguous(f"broker lookup failed: {type(exc).__name__}")
+            self._mark_ledger_status(order)
+            return ExecutionResult(
+                success=False, order=order,
+                message=(
+                    "Broker lookup failed. The order remains UNKNOWN; a failed "
+                    "question is not a negative answer."
+                ),
+            )
+
+        if found is None:
+            # The broker positively reports no order under this ID, so the
+            # submission never landed and no exposure was created.
+            logger.info(
+                "Broker reports no order for client ID %s; submission never landed",
+                order.client_order_id,
+            )
+            order.reconcile_to(
+                OrderStatus.INTENT_PERSISTED,
+                "broker confirmed no order exists for this client order ID",
+            )
+            self._journal_transition(order, "resolved: broker has no such order")
+            return ExecutionResult(
+                success=False, order=order,
+                message="Broker has no such order; safe to resubmit with the same client order ID.",
+            )
+
+        data = self._normalize_adapter_payload(found)
+        mismatch = self._intent_mismatch(order, data)
+        if mismatch:
+            logger.error(
+                "Client order ID %s is attached to an order that does not match "
+                "our intent (%s). Freezing.", order.client_order_id, mismatch,
+            )
+            order.reconcile_to(
+                OrderStatus.RECONCILIATION_REQUIRED,
+                f"client order ID collision or mismatch: {mismatch}",
+            )
+            order.ambiguity_reason = "client order ID mismatch"
+            self._mark_ledger_status(order)
+            return ExecutionResult(
+                success=False, order=order,
+                message=f"Client order ID resolves to a different order: {mismatch}",
+            )
+
+        # The broker has our order. Adopt its truth rather than resubmitting.
+        logger.info(
+            "Attached to existing broker order for client ID %s", order.client_order_id
+        )
+        order.reconcile_to(
+            OrderStatus.UNKNOWN, "attaching to the broker's existing order"
+        )
+        return self._apply_live_execution_response(order, data)
+
+    def _intent_mismatch(self, order: Order, data: Dict[str, Any]) -> Optional[str]:
+        """Describe how a broker order differs from what we intended, if it does."""
+        symbol = data.get("symbol") or data.get("instrument")
+        if symbol and str(symbol) != str(order.asset):
+            return f"instrument {symbol!r} != intended {order.asset!r}"
+        side = data.get("side")
+        if side and str(side).lower() != order.side.value:
+            return f"side {side!r} != intended {order.side.value!r}"
+        quantity = data.get("quantity") or data.get("qty")
+        if quantity not in (None, ""):
+            try:
+                if abs(float(quantity) - order.quantity) > _QUANTITY_TOLERANCE:
+                    return f"quantity {quantity} != intended {order.quantity}"
+            except (TypeError, ValueError):
+                return f"unreadable quantity {quantity!r}"
+        return None
+
+    def _record_resolution_attempt(self, order: Order) -> None:
+        """Persist that we asked the broker about this order, and when."""
+        order.resolution_attempts += 1
+        if self.intent_journal is None:
+            return
+        try:
+            self.intent_journal.record_transition(
+                client_order_id=order.client_order_id,
+                to_status=order.status.value,
+                reason=f"broker lookup attempt #{order.resolution_attempts}",
+                filled_quantity=order.filled_quantity,
+                broker_order_id=order.broker_order_id,
+            )
+        except IntentPersistenceError as exc:
+            self.intent_persistence_failures += 1
+            logger.error("Could not journal a resolution attempt: %s", exc)
 
     def _execute_immediate(self, order: Order) -> ExecutionResult:
         """Execute order immediately at market."""

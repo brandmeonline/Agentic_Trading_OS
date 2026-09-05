@@ -286,6 +286,29 @@ class AlpacaClient:
         result = self._request("GET", f"/v2/orders/{order_id}")
         return self._parse_order(result)
 
+    def get_order_by_client_order_id(self, client_order_id: str) -> Optional[AlpacaOrder]:
+        """Look an order up by the ID we generated before submitting it.
+
+        ATOS-P0-EXEC-003: this is the only safe way to answer "did my order
+        get through?" after a lost response. Alpaca exposes it directly, so a
+        timeout never has to be resolved by guessing or by resubmitting.
+
+        Returns None when the broker has no such order, which is the only
+        evidence that permits a resubmission.
+        """
+        try:
+            result = self._request(
+                "GET", "/v2/orders:by_client_order_id",
+                params={"client_order_id": client_order_id},
+            )
+        except Exception:
+            # An error here is not proof of absence. The caller must treat
+            # this as unresolved, never as "no order exists".
+            raise
+        if not result:
+            return None
+        return self._parse_order(result)
+
     def get_orders(self, status: str = "open", limit: int = 50) -> List[AlpacaOrder]:
         """Get orders."""
         result = self._request("GET", "/v2/orders", params={"status": status, "limit": limit})

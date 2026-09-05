@@ -386,8 +386,13 @@ def test_alpaca_execution_adapter_maps_client_order_response():
         "time_in_force": "day",
         "limit_price": 102,
         "stop_price": None,
-        "client_order_id": order.id,
+        # ATOS-P0-EXEC-003: the broker must be given the full stable UUID, not
+        # the eight-character order.id. The idempotency key has to be the one
+        # we can prove unique and can reproduce after a restart.
+        "client_order_id": order.client_order_id,
     }]
+    assert order.client_order_id != order.id
+    assert len(order.client_order_id) > 32
     assert cancelled is True
     assert client.cancelled == ["alpaca-123"]
     assert ledger.positions["BTC/USD"].quantity == 1
