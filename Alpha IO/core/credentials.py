@@ -129,12 +129,13 @@ class EncryptionHelper:
         self._salt = salt or secrets.token_bytes(16)
 
         self._require_crypto()
+        assert Fernet is not None  # _require_crypto raises otherwise
         key = self._derive_key(self._password, self._salt)
         self._fernet = Fernet(key)
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         """Derive encryption key from password."""
-        if not HAS_CRYPTOGRAPHY:
+        if not HAS_CRYPTOGRAPHY or PBKDF2HMAC is None or hashes is None:
             raise CredentialEncryptionError("Cannot derive credential encryption key without cryptography")
 
         kdf = PBKDF2HMAC(
@@ -159,6 +160,7 @@ class EncryptionHelper:
         """Encrypt string data."""
         if self._fernet is None:
             self.initialize()
+        assert self._fernet is not None  # initialize() sets it or raises
         return self._fernet.encrypt(data.encode())
 
     def decrypt(self, data: bytes) -> str:
@@ -172,7 +174,15 @@ class EncryptionHelper:
 
     @property
     def salt(self) -> bytes:
-        """Get current salt."""
+        """Get current salt.
+
+        Raises rather than returning None: a caller that persists a salt of
+        None has silently stored credentials it cannot decrypt later.
+        """
+        if self._salt is None:
+            raise CredentialEncryptionError(
+                "no salt yet; initialize() has not run"
+            )
         return self._salt
 
 

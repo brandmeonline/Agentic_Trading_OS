@@ -24,6 +24,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from core.net_guard import assert_permitted
 import xml.etree.ElementTree as ET
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -43,6 +45,10 @@ USER_AGENT = "AgenticTradingOS/1.0 (+https://github.com/brandmeonline/Agentic_Tr
 
 class FeedError(Exception):
     """Base class for ingestion errors."""
+
+
+#: Largest feed body this parser will accept, in characters.
+MAX_FEED_BYTES = 8 * 1024 * 1024
 
 
 class FeedParseError(FeedError):
@@ -258,8 +264,20 @@ class FeedParser:
     ) -> List[NewsItem]:
         now = now or datetime.now(timezone.utc)
 
+        # A feed body larger than this is not a feed. The cap is the real
+        # defence: ElementTree does not resolve external entities and rejects
+        # undefined ones, so the residual XML risk is a decompression or
+        # blow-up bomb, which a size limit answers directly.
+        if len(document) > MAX_FEED_BYTES:
+            raise FeedParseError(
+                f"{source.name}: feed body is {len(document)} bytes, over the "
+                f"{MAX_FEED_BYTES} byte limit"
+            )
+
         try:
-            root = ET.fromstring(document)
+            # Size-capped above, and ElementTree does not resolve
+            # external entities, so the residual risk is bounded.
+            root = ET.fromstring(document)  # nosec B314
         except ET.ParseError as exc:
             raise FeedParseError(f"{source.name}: malformed XML ({exc})") from exc
 
@@ -391,7 +409,9 @@ class ConditionalFetcher:
         last_error: Optional[str] = None
         for attempt in range(self.max_retries):
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout, context=self._ssl_context) as response:
+                assert_permitted(request)
+                # Scheme checked by assert_permitted() immediately above.
+                with urllib.request.urlopen(request, timeout=self.timeout, context=self._ssl_context) as response:  # nosec B310
                     body = response.read().decode(response.headers.get_content_charset() or "utf-8", "replace")
                     self._remember(source.url, response.headers)
                     return FetchResult(source, body)

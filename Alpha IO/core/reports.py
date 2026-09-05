@@ -21,7 +21,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional
 
 DEFAULT_REPORT_DIR = "data/reports"
 LLM_BRIEF_ENV = "ALPHAIO_LLM_BRIEF"

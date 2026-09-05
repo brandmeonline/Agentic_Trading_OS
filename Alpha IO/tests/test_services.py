@@ -6,6 +6,8 @@ external feeds. Every test here uses injected fakes — none touches the network
 """
 
 import os
+import tempfile
+from pathlib import Path
 import sys
 import unittest
 
@@ -216,9 +218,9 @@ class TestStartup(EnvCase):
         self.assertTrue(services.running)
 
     def test_brief_generator_is_pointed_at_the_configured_directory(self):
-        services = self.build(ServiceConfig(brief_enabled=True, report_dir="/tmp/alphaio-briefs"))
+        services = self.build(ServiceConfig(brief_enabled=True, report_dir=str(Path(tempfile.gettempdir()) / "alphaio-briefs")))
         services.start()
-        self.assertEqual(str(services.brief_generator.report_dir), "/tmp/alphaio-briefs")
+        self.assertEqual(str(services.brief_generator.report_dir), str(Path(tempfile.gettempdir()) / "alphaio-briefs"))
 
     def test_start_is_idempotent(self):
         news = FakeNewsService()
@@ -412,8 +414,8 @@ class TestCorpusPersistenceConfig(EnvCase):
         self.assertIsNone(ServiceConfig.from_env().corpus_db)
 
     def test_corpus_db_is_read_from_env(self):
-        os.environ["ALPHAIO_CORPUS_DB"] = "/tmp/alphaio-corpus.db"
-        self.assertEqual(ServiceConfig.from_env().corpus_db, "/tmp/alphaio-corpus.db")
+        os.environ["ALPHAIO_CORPUS_DB"] = str(Path(tempfile.gettempdir()) / "alphaio-corpus.db")
+        self.assertEqual(ServiceConfig.from_env().corpus_db, str(Path(tempfile.gettempdir()) / "alphaio-corpus.db"))
 
 if __name__ == "__main__":
     unittest.main()

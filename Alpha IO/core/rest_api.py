@@ -23,9 +23,7 @@ import logging
 from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
-from datetime import datetime, timedelta
-from functools import wraps
-import queue
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -503,11 +501,14 @@ class TradingAPIHandlers:
         body = request.body or {}
 
         required_fields = ["symbol", "side", "type", "quantity"]
-        for field in required_fields:
-            if field not in body:
+        for required_field in required_fields:
+            if required_field not in body:
                 return APIResponse(
                     status_code=400,
-                    body={"success": False, "error": f"Missing required field: {field}"}
+                    body={
+                        "success": False,
+                        "error": f"Missing required field: {required_field}",
+                    }
                 )
 
         if not self.simulation_mode:
@@ -638,14 +639,14 @@ class TradingAPIHandlers:
             t = int(time.time() - (limit - i) * 3600)
             o = base_price + np.random.randn() * 100
             h = o + abs(np.random.randn() * 50)
-            l = o - abs(np.random.randn() * 50)
+            lo = o - abs(np.random.randn() * 50)
             c = o + np.random.randn() * 30
             v = abs(np.random.randn() * 100) + 10
             klines.append({
                 "timestamp": t,
                 "open": round(o, 2),
                 "high": round(h, 2),
-                "low": round(l, 2),
+                "low": round(lo, 2),
                 "close": round(c, 2),
                 "volume": round(v, 4),
             })
@@ -934,7 +935,7 @@ class RESTAPIServer:
 
             return response
 
-        except Exception as e:
+        except Exception:
             self._error_count += 1
             logger.exception("Unhandled REST API error for request %s", request.request_id)
             return APIResponse(
@@ -1267,7 +1268,7 @@ def test_rest_api():
     )
     response = auth_server.handle_request(request)
     assert response.status_code == 200
-    print(f"   Authenticated request successful!")
+    print("   Authenticated request successful!")
 
     # Test OpenAPI spec generation
     print("\n10. Testing OpenAPI spec generation...")

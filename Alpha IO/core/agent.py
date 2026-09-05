@@ -7,6 +7,7 @@ state representation for optimal trading decisions.
 
 from __future__ import annotations
 
+import ast
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -349,8 +350,15 @@ class TradingAgent:
 
     def load_state(self, state: Dict) -> None:
         """Load agent state from saved data."""
-        self.q_table = {eval(k): v for k, v in state.get("q_table", {}).items()}
-        self.q_table_2 = {eval(k): v for k, v in state.get("q_table_2", {}).items()}
+        # ast.literal_eval, not eval: these keys come back from a saved
+        # state file, and eval() on that content is arbitrary code
+        # execution by anyone who can write the file.
+        self.q_table = {
+            ast.literal_eval(k): v for k, v in state.get("q_table", {}).items()
+        }
+        self.q_table_2 = {
+            ast.literal_eval(k): v for k, v in state.get("q_table_2", {}).items()
+        }
         self.epsilon = state.get("epsilon", self.config.epsilon)
         self.total_reward = state.get("total_reward", 0.0)
         self.trade_count = state.get("trade_count", 0)

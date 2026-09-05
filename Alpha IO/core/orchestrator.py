@@ -11,10 +11,8 @@ Production-ready orchestration layer that:
 
 from __future__ import annotations
 
-import os
 import sys
 import time
-import json
 import signal
 import logging
 import threading
@@ -22,7 +20,7 @@ import queue
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import traceback
 
@@ -39,7 +37,7 @@ except ImportError:
 try:
     from core.credentials import (
         get_credentials_manager, CredentialsManager,
-        get_testnet_endpoint, get_public_endpoint
+        get_testnet_endpoint, get_public_endpoint  # noqa: F401 - availability probe
     )
 except ImportError:
     get_credentials_manager = None
@@ -48,7 +46,7 @@ except ImportError:
 try:
     from core.live_data import (
         create_live_data_manager, LiveDataManager,
-        create_binance_client, BinancePublicClient
+        create_binance_client, BinancePublicClient  # noqa: F401 - availability probe
     )
 except ImportError:
     create_live_data_manager = None
@@ -69,7 +67,7 @@ except ImportError:
 try:
     from core.exchange_connectors import (
         create_binance_connector, create_exchange_manager,
-        BinanceConnector, ExchangeManager
+        BinanceConnector, ExchangeManager  # noqa: F401 - availability probe
     )
 except ImportError:
     create_binance_connector = None
@@ -101,7 +99,7 @@ except ImportError:
 
 try:
     from core.alpaca_connector import (
-        create_alpaca_client, AlpacaClient, AlpacaConfig, AlpacaEnvironment
+        create_alpaca_client, AlpacaClient, AlpacaConfig, AlpacaEnvironment  # noqa: F401 - availability probe
     )
 except ImportError:
     create_alpaca_client = None
@@ -183,7 +181,10 @@ class OrchestratorConfig:
     enable_rl_agent: bool = False  # Disabled by default (resource intensive)
 
     # API settings
-    api_host: str = "0.0.0.0"
+    # Loopback by default. The control plane authenticates unconditionally
+    # (ATOS-P2-API-001), but an authenticated service on every interface is
+    # still a service on every interface.
+    api_host: str = "127.0.0.1"
     api_port: int = 8080
 
     # Database settings
@@ -462,7 +463,7 @@ class TradingOrchestrator:
             print("\n[6/7] Initializing trading strategies...")
             if self.config.enable_strategies and create_default_ensemble:
                 self.strategies = create_default_ensemble()
-                print(f"      ✓ Strategy ensemble initialized")
+                print("      ✓ Strategy ensemble initialized")
             else:
                 print("      ⊘ Strategies disabled or not available")
 
@@ -1013,7 +1014,7 @@ class TradingOrchestrator:
                     source="price_updater"
                 ))
 
-        except Exception as e:
+        except Exception:
             # Silently handle price update errors
             pass
 
@@ -1079,7 +1080,10 @@ class TradingOrchestrator:
             except Exception as e:
                 self._handle_error(f"strategy_{symbol}", e)
 
-    def _simple_strategy(self, prices: 'np.ndarray', volumes: 'np.ndarray') -> float:
+    def _simple_strategy(self, prices: Any, volumes: Any) -> float:
+        # Annotated Any rather than 'np.ndarray': numpy is imported inside
+        # the body, so the forward reference named a module-level symbol
+        # that does not exist and any get_type_hints() call would raise.
         """Simple momentum strategy for demonstration."""
         import numpy as np
 

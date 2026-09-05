@@ -317,8 +317,10 @@ class OrderIntentJournal:
                         sets.append("broker_order_id = ?")
                         params.append(broker_order_id)
                     params.append(client_order_id)
+                    # The interpolated part is a join of column-name
+                    # literals appended above; every value is bound.
                     conn.execute(
-                        f"UPDATE order_intents SET {', '.join(sets)} "
+                        f"UPDATE order_intents SET {', '.join(sets)} "  # nosec B608
                         "WHERE client_order_id = ?",
                         params,
                     )
@@ -354,7 +356,10 @@ class OrderIntentJournal:
         placeholders = ",".join("?" for _ in TERMINAL_INTENT_STATUSES)
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM order_intents WHERE LOWER(status) NOT IN ({placeholders}) "
+                # placeholders is a string of "?" separated by commas,
+                # one per terminal status; the statuses themselves are
+                # bound below.
+                f"SELECT * FROM order_intents WHERE LOWER(status) NOT IN ({placeholders}) "  # nosec B608
                 "ORDER BY created_at",
                 tuple(TERMINAL_INTENT_STATUSES),
             ).fetchall()

@@ -14,7 +14,6 @@ from typing import Dict, List, Optional, Callable, Any
 from enum import Enum
 import uuid
 import time
-from collections import deque
 
 from core.ledger import TradingLedger
 from core.persistence_policy import (
@@ -518,7 +517,7 @@ class AlpacaExecutionAdapter:
         """Convert Alpaca dataclasses or objects to dictionaries."""
         if isinstance(value, dict):
             return value
-        if is_dataclass(value):
+        if is_dataclass(value) and not isinstance(value, type):
             return asdict(value)
         to_dict = getattr(value, "to_dict", None)
         if callable(to_dict):
@@ -822,6 +821,7 @@ class ExecutionEngine:
             strategy=order.strategy,
             signal_id=order.signal_id,
         )
+        assert self.intent_journal is not None  # guarded by the caller
         return self.intent_journal.record_intent(intent)
 
     def _journal_transition(self, order: Order, reason: str) -> None:
@@ -963,7 +963,7 @@ class ExecutionEngine:
         quantity = data.get("quantity") or data.get("qty")
         if quantity not in (None, ""):
             try:
-                if abs(float(quantity) - order.quantity) > _QUANTITY_TOLERANCE:
+                if abs(float(str(quantity)) - order.quantity) > _QUANTITY_TOLERANCE:
                     return f"quantity {quantity} != intended {order.quantity}"
             except (TypeError, ValueError):
                 return f"unreadable quantity {quantity!r}"
@@ -1271,7 +1271,7 @@ class ExecutionEngine:
             return {}
         if isinstance(payload, dict):
             return payload
-        if is_dataclass(payload):
+        if is_dataclass(payload) and not isinstance(payload, type):
             return asdict(payload)
         to_dict = getattr(payload, "to_dict", None)
         if callable(to_dict):
@@ -1361,6 +1361,14 @@ class ExecutionEngine:
         """Execute using Time-Weighted Average Price algorithm."""
         slice_qty = order.quantity / self.config.algo_num_slices
         slice_interval = (self.config.algo_duration_minutes * 60) / self.config.algo_num_slices
+        # Nothing waits for that interval: every slice fires immediately, so
+        # this TWAP is time-weighted in name only. Real scheduling is
+        # ATOS-P3-EXEC-001. Logged rather than dropped so the gap between the
+        # schedule and the execution stays visible in a run.
+        logger.debug(
+            "TWAP schedule: %d slices of %.6f, nominally %.1fs apart",
+            self.config.algo_num_slices, slice_qty, slice_interval,
+        )
 
         total_value = 0.0
         total_qty = 0.0

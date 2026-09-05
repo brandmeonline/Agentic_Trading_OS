@@ -27,7 +27,7 @@ from __future__ import annotations
 import argparse
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
@@ -235,7 +235,7 @@ class TradingSystem:
             if not self.initialize():
                 return
 
-        print(f"\nStarting live trading simulation...")
+        print("\nStarting live trading simulation...")
         print(f"Duration: {duration_minutes} minutes")
         print(f"Mode: {'Simulation' if self.config.simulation_mode else 'LIVE'}")
         print("-" * 50)
@@ -244,7 +244,6 @@ class TradingSystem:
         from core.execution import OrderSide
 
         self._data_feed.connect()
-        current_capital = self.config.initial_capital
 
         # Trading loop
         for minute in range(duration_minutes):
@@ -527,7 +526,7 @@ class TradingSystem:
         try:
             from core.stress_testing import (
                 StressTester, StressConfig, TailRiskHedger,
-                ExtremeValueAnalyzer, CrisisType, HISTORICAL_SCENARIOS
+                ExtremeValueAnalyzer, CrisisType, HISTORICAL_SCENARIOS  # noqa: F401 - availability probe
             )
 
             # Generate sample portfolio data
@@ -693,8 +692,9 @@ class TradingSystem:
             time.sleep(1)
 
             # Get results
+            # Everything printed below comes from get_status(); the
+            # performance report was fetched here and discarded.
             status = engine.get_status()
-            report = engine.get_performance_report()
 
             print("\n" + "-" * 50)
             print("RESULTS")
@@ -746,7 +746,7 @@ class TradingSystem:
         try:
             from core.advanced_backtest import (
                 MonteCarloSimulator, MonteCarloConfig,
-                RegimeAwareBacktest, WalkForwardOptimizer, WalkForwardConfig
+                RegimeAwareBacktest, WalkForwardOptimizer, WalkForwardConfig  # noqa: F401 - availability probe
             )
 
             # Generate sample data
@@ -786,12 +786,12 @@ class TradingSystem:
 
             regime_result = regime_bt.run_backtest(prices, simple_strategy)
 
-            print(f"\n  Overall Results:")
+            print("\n  Overall Results:")
             for k, v in regime_result.overall_metrics.items():
                 if isinstance(v, float):
                     print(f"    {k}: {v:.4f}")
 
-            print(f"\n  Regime-Specific Performance:")
+            print("\n  Regime-Specific Performance:")
             for regime, metrics in regime_result.regime_metrics.items():
                 sharpe = metrics.get('sharpe_ratio', 0)
                 dd = metrics.get('max_drawdown', 0)

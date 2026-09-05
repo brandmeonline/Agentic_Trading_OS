@@ -30,6 +30,8 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from core.net_guard import assert_permitted
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -527,5 +529,7 @@ def _first_number(*candidates: Any) -> Optional[float]:
 def _http_get(url: str, timeout: float) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "AgenticTradingOS/1.0"})
     context = ssl.create_default_context()
-    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+    assert_permitted(request)
+    # Scheme checked by assert_permitted() immediately above.
+    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:  # nosec B310
         return response.read()

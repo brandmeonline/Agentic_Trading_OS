@@ -10,9 +10,9 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import date, datetime
 from collections import deque
 from enum import Enum
 
@@ -164,7 +164,7 @@ class RiskManager:
         self.risk_events: List[Tuple[datetime, RiskEvent, str]] = []
 
         # Daily reset tracking
-        self.last_reset_date: Optional[datetime] = None
+        self.last_reset_date: Optional[date] = None
 
         # Backward compatibility
         self.max_risk_per_trade = self.config.max_risk_per_trade

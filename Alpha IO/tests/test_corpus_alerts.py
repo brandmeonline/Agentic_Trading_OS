@@ -183,8 +183,8 @@ class TestRateLimiting(CorpusAlertCase):
 
 class TestCrossingComparisons(CorpusAlertCase):
     def test_cross_above_needs_a_previous_observation(self):
-        alert = self.make_alert(AlertType.NEWS_MENTIONS, 3.0, comparison="cross_above",
-                                cooldown_seconds=0)
+        self.make_alert(AlertType.NEWS_MENTIONS, 3.0, comparison="cross_above",
+                        cooldown_seconds=0)
         for n in range(5):
             self.corpus.add(item(f"NVDA story {n}"))
         # First sweep has no prior value, so a crossing cannot be established.

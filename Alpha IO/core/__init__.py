@@ -15,7 +15,7 @@ __all__ = []
 try:
     from core.agent import TradingAgent, AgentConfig, LearningAlgorithm
     __all__.extend(["TradingAgent", "AgentConfig", "LearningAlgorithm"])
-except ImportError as e:
+except ImportError:
     TradingAgent = None
     AgentConfig = None
     LearningAlgorithm = None
@@ -23,7 +23,7 @@ except ImportError as e:
 try:
     from core.risk import RiskManager, RiskConfig, RiskLevel
     __all__.extend(["RiskManager", "RiskConfig", "RiskLevel"])
-except ImportError as e:
+except ImportError:
     RiskManager = None
     RiskConfig = None
     RiskLevel = None
@@ -31,7 +31,7 @@ except ImportError as e:
 try:
     from core.execution import ExecutionEngine, ExecutionConfig, Order, OrderType, OrderSide
     __all__.extend(["ExecutionEngine", "ExecutionConfig", "Order", "OrderType", "OrderSide"])
-except ImportError as e:
+except ImportError:
     ExecutionEngine = None
     ExecutionConfig = None
 

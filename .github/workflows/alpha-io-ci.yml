@@ -9,6 +9,16 @@ on:
     branches:
       - main
 
+# ATOS-P2-CI-001. Four jobs, in dependency order:
+#
+#   secret-scan  -> everything else. A commit carrying a credential must not
+#                   be able to go green on the strength of its tests.
+#   quality      -> ruff, mypy, bandit, pip-audit. Static gates, no network
+#                   dependency beyond pip-audit's advisory database.
+#   regression   -> compileall, the full suite with sockets blocked, the
+#                   adversarial marker suite, and the coverage floors.
+#   paper-smoke  -> optional, credential-gated, paper only.
+
 jobs:
   secret-scan:
     name: Secret hygiene (ATOS-P0-SEC-001)
@@ -30,18 +40,83 @@ jobs:
       - name: Install scan dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install -r "Alpha IO/requirements-ci.txt"
 
       - name: Scan tracked files for credentials
         run: python -m pytest -q "Alpha IO/tests/test_secret_hygiene.py"
 
-  regression:
+  quality:
+    name: Static analysis
     needs: secret-scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
-      ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install from the dependency manifests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "Alpha IO/requirements-ci.txt"
+          python -m pip install -r "Alpha IO/requirements.txt"
+
+      - name: Ruff
+        run: ruff check .
+
+      # Strict-first on the modules that decide what reaches a broker. The
+      # rest of the tree is not clean under mypy yet; typing it is worth its
+      # own change, and a check that runs everywhere and passes nowhere is
+      # not a gate.
+      - name: mypy (execution, risk, reconciliation, credentials)
+        working-directory: Alpha IO
+        run: |
+          mypy --follow-imports=skip --ignore-missing-imports \
+            core/execution.py \
+            core/risk.py \
+            core/reconciliation.py \
+            core/credentials.py \
+            core/order_intent.py \
+            core/runtime_state.py \
+            core/readiness.py \
+            core/money.py \
+            core/exposure.py \
+            core/risk_anchors.py \
+            core/live_authorization.py \
+            core/control_plane.py \
+            core/persistence_policy.py \
+            core/safety_config.py \
+            core/operator_status.py \
+            core/net_guard.py \
+            core/alerting.py
+
+      # Production code at medium severity and above. Every finding is either
+      # fixed or carries a "# nosec <id>" with the reasoning on the line above.
+      - name: Bandit (production code)
+        run: bandit -q -r "Alpha IO" --exclude "Alpha IO/tests" --severity-level medium
+
+      # Tests are scanned too, with two rules off: B101 because assert is what
+      # a test is made of, and B104 because several tests bind 0.0.0.0 in
+      # order to assert that the bind auditor objects to it.
+      - name: Bandit (tests)
+        run: bandit -q -r "Alpha IO/tests" --severity-level medium --skip B101,B104
+
+      # Fails on any known vulnerability in the declared dependencies. To
+      # accept one deliberately, add --ignore-vuln <id> here with a comment
+      # saying who accepted it and why; an undocumented exception is the
+      # thing this gate exists to prevent.
+      - name: pip-audit
+        run: pip-audit -r "Alpha IO/requirements.txt" --progress-spinner off
+
+  regression:
+    name: Tests and coverage
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -52,63 +127,69 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install regression dependencies
+      - name: Install from the dependency manifests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy pandas flask werkzeug cryptography pytest scikit-learn
+          python -m pip install -r "Alpha IO/requirements-ci.txt"
+          python -m pip install -r "Alpha IO/requirements.txt"
 
       - name: Compile Alpha IO
         run: python -m compileall -q "Alpha IO"
 
-      - name: Run explicit regression suite
+      # The whole directory, not a curated list. The list was the bug: a new
+      # test file was in the suite locally and invisible in CI until somebody
+      # remembered to add it.
+      #
+      # -p no_network blocks every non-loopback socket for the duration, which
+      # is the "no real-network dependency for core safety tests" requirement
+      # enforced rather than stated.
+      - name: Full suite, with the network blocked
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
-          python -m pytest -q \
-            "Alpha IO/tests/test_adversarial_broker_harness.py" \
-            "Alpha IO/tests/test_advanced_modules.py" \
-            "Alpha IO/tests/test_alerting_escalation.py" \
-            "Alpha IO/tests/test_agent.py" \
-            "Alpha IO/tests/test_agent_authority_boundary.py" \
-            "Alpha IO/tests/test_asymmetry_measured.py" \
-            "Alpha IO/tests/test_broker_reconciliation.py" \
-            "Alpha IO/tests/test_cancel_fill_race.py" \
-            "Alpha IO/tests/test_control_plane_authorization.py" \
-            "Alpha IO/tests/test_corpus_alerts.py" \
-            "Alpha IO/tests/test_crash_replay.py" \
-            "Alpha IO/tests/test_credentials_security.py" \
-            "Alpha IO/tests/test_daily_drawdown_recovery.py" \
-            "Alpha IO/tests/test_dashboard_trust.py" \
-            "Alpha IO/tests/test_decimal_money.py" \
-            "Alpha IO/tests/test_deployment_readiness.py" \
-            "Alpha IO/tests/test_headroom_compress.py" \
-            "Alpha IO/tests/test_ledger_execution.py" \
-            "Alpha IO/tests/test_live_activation_fail_closed.py" \
-            "Alpha IO/tests/test_live_persistence_failure.py" \
-            "Alpha IO/tests/test_live_recovery.py" \
-            "Alpha IO/tests/test_llm_client.py" \
-            "Alpha IO/tests/test_market_view.py" \
-            "Alpha IO/tests/test_news_feed.py" \
-            "Alpha IO/tests/test_order_idempotency.py" \
-            "Alpha IO/tests/test_order_intent_wal.py" \
-            "Alpha IO/tests/test_order_lifecycle_adversarial.py" \
-            "Alpha IO/tests/test_pipeline_and_eval.py" \
-            "Alpha IO/tests/test_plan_milestones.py" \
-            "Alpha IO/tests/test_recurring_reconciliation.py" \
-            "Alpha IO/tests/test_reduce_only_proof.py" \
-            "Alpha IO/tests/test_reports_scheduler.py" \
-            "Alpha IO/tests/test_rest_api_security.py" \
-            "Alpha IO/tests/test_risk.py" \
-            "Alpha IO/tests/test_risk_reservations.py" \
-            "Alpha IO/tests/test_safety_config_authority.py" \
-            "Alpha IO/tests/test_run_web_security.py" \
-            "Alpha IO/tests/test_secret_hygiene.py" \
-            "Alpha IO/tests/test_services.py" \
-            "Alpha IO/tests/test_terminal_view.py" \
-            "Alpha IO/tests/test_unified_engine.py" \
-            "Alpha IO/tests/test_web_security.py"
+          python -m pytest -q -p no_network "Alpha IO/tests" \
+            --cov=core --cov-report=json:coverage.json --cov-report=term
 
-      - name: Run adversarial suite (ATOS-P0-EXEC-001)
-        run: python -m pytest -q -m adversarial "Alpha IO/tests"
+      - name: Adversarial suite (ATOS-P0-EXEC-001)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m pytest -q -p no_network -m adversarial "Alpha IO/tests"
 
-      - name: Run optional Alpaca paper smoke
+      # Per-module ratchet floors on the code that can lose money. A global
+      # percentage would let the order lifecycle rot behind a well-tested
+      # chart module.
+      - name: Coverage floors for the safety modules
+        run: python "Alpha IO/tools/coverage_gate.py" coverage.json
+
+  paper-smoke:
+    name: Optional Alpaca paper smoke
+    needs: regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Paper credentials only, with the minimum permissions the smoke test
+      # needs. A live key must never be available to CI: anything that can
+      # read this environment can place an order with it.
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install from the dependency manifests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "Alpha IO/requirements-ci.txt"
+          python -m pip install -r "Alpha IO/requirements.txt"
+
+      # The only step in the pipeline that touches a network. Skipped, not
+      # failed, when the credentials are absent - a fork's pull request has
+      # no access to them and must still be able to go green.
+      - name: Run Alpaca paper smoke
         if: ${{ env.ALPACA_API_KEY != '' && env.ALPACA_API_SECRET != '' }}
         run: python -m pytest -q "Alpha IO/tests/test_alpaca_paper_smoke.py"

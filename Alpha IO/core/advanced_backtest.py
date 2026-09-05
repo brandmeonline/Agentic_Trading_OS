@@ -15,9 +15,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
-from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
-import copy
+from datetime import datetime
 
 
 # =============================================================================
@@ -911,7 +909,7 @@ if __name__ == "__main__":
 
     wf_result = wf_optimizer.run(data, parameter_space)
 
-    print(f"\nCombined Metrics:")
+    print("\nCombined Metrics:")
     for k, v in wf_result.combined_metrics.items():
         print(f"  {k}: {v:.4f}")
 
@@ -935,15 +933,15 @@ if __name__ == "__main__":
     # Bootstrap simulation
     mc_result = mc_simulator.simulate_returns(returns, n_periods=252)
 
-    print(f"\nSimulation Statistics:")
+    print("\nSimulation Statistics:")
     for k, v in mc_result.statistics.items():
         print(f"  {k}: {v:.4f}")
 
-    print(f"\nVaR Estimates:")
+    print("\nVaR Estimates:")
     for conf, var in mc_result.var_estimates.items():
         print(f"  {conf*100:.0f}% VaR: {var:.4f}")
 
-    print(f"\nCVaR Estimates:")
+    print("\nCVaR Estimates:")
     for conf, cvar in mc_result.cvar_estimates.items():
         print(f"  {conf*100:.0f}% CVaR: {cvar:.4f}")
 
@@ -974,11 +972,11 @@ if __name__ == "__main__":
 
     regime_result = regime_backtest.run_backtest(prices, regime_strategy)
 
-    print(f"\nOverall Metrics:")
+    print("\nOverall Metrics:")
     for k, v in regime_result.overall_metrics.items():
         print(f"  {k}: {v:.4f}")
 
-    print(f"\nRegime-Specific Performance:")
+    print("\nRegime-Specific Performance:")
     for regime, metrics in regime_result.regime_metrics.items():
         print(f"\n  {regime.value}:")
         for k, v in metrics.items():

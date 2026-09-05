@@ -17,7 +17,7 @@ def check_dependencies():
     missing = []
 
     try:
-        import flask
+        import flask  # noqa: F401 - availability probe
     except ImportError:
         missing.append('flask')
 
@@ -35,14 +35,17 @@ def main():
     print("="*60)
 
     if not check_dependencies():
-        print("\nInstalling Flask...")
-        os.system(f"{sys.executable} -m pip install flask")
+        print("\nFlask is not installed. Install it with:")
+        print(f"  {sys.executable} -m pip install flask")
+        return 1
 
     # Import and run
     from web.app import run_server
 
     # Get config from environment or defaults
-    host = os.environ.get('WEB_HOST', '0.0.0.0')
+    # Loopback unless WEB_HOST says otherwise. A dashboard that can place
+    # orders should not be reachable from the network by default.
+    host = os.environ.get('WEB_HOST', '127.0.0.1')
     port = int(os.environ.get('WEB_PORT', '5000'))
     debug = os.environ.get('WEB_DEBUG', '').lower() == 'true'
     password = os.environ.get('WEB_PASSWORD') or os.environ.get('ADMIN_PASSWORD')
@@ -68,7 +71,7 @@ def main():
     services = start_background_services()
     print(f"  {describe_startup(services)}")
 
-    print(f"\n  Starting web server...")
+    print("\n  Starting web server...")
     print(f"  URL: http://localhost:{port}")
     print("  Login: configured admin user")
     print("\n  Press Ctrl+C to stop.\n")

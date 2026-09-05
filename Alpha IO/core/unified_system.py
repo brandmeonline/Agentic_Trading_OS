@@ -17,10 +17,9 @@ import queue
 import time
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 from datetime import datetime
-import json
 
 from core.execution import ExecutionConfig, ExecutionEngine, OrderSide, OrderType
 from core.ledger import TradingLedger

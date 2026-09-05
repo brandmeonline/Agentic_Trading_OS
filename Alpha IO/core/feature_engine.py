@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
-from abc import ABC, abstractmethod
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -683,7 +682,6 @@ class MicrostructureFeatures:
             features.append(spread)
             names.append("bid_ask_spread")
 
-            mid = (bid + ask) / 2
             micro_price = (bid * ask + ask * bid) / (bid + ask + 1e-10)
             features.append((close - micro_price) / (micro_price + 1e-10))
             names.append("micro_price_dist")
@@ -1164,8 +1162,8 @@ class RegimeFeatures:
         self, high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int
     ) -> np.ndarray:
         """Probability of breakout based on compression."""
-        # Bollinger Band squeeze
-        ma = sma(close, period)
+        # Bollinger Band squeeze. Only the band width matters here, so
+        # the moving average itself is not needed.
         std = rolling_std(close, period)
 
         # Keltner Channel
@@ -1657,7 +1655,7 @@ if __name__ == "__main__":
     )
 
     print(f"Generated {feature_set.n_features} features for {feature_set.n_samples} samples")
-    print(f"\nFeature categories:")
+    print("\nFeature categories:")
     print(f"  Technical: {feature_set.metadata.get('n_technical', 0)}")
     print(f"  Microstructure: {feature_set.metadata.get('n_microstructure', 0)}")
     print(f"  Regime: {feature_set.metadata.get('n_regime', 0)}")
@@ -1669,6 +1667,6 @@ if __name__ == "__main__":
     importance = engine.get_feature_importance(feature_set, future_returns)
     top_5 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
 
-    print(f"\nTop 5 features by importance:")
+    print("\nTop 5 features by importance:")
     for name, imp in top_5:
         print(f"  {name}: {imp:.4f}")

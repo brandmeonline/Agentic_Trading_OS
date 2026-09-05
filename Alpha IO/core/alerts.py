@@ -20,12 +20,14 @@ import time
 import threading
 import smtplib
 import urllib.request
+
+from core.net_guard import assert_permitted
 import urllib.error
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from collections import deque
-from dataclasses import dataclass, field, asdict
-from typing import Deque, Dict, List, Optional, Any, Callable, Tuple
+from dataclasses import dataclass, field
+from typing import Deque, Dict, List, Optional, Callable, Tuple
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
@@ -245,7 +247,9 @@ class WebhookHandler:
                 data=data,
                 headers={'Content-Type': 'application/json'}
             )
-            with urllib.request.urlopen(req, timeout=10) as response:
+            assert_permitted(req)
+            # Scheme checked by assert_permitted() immediately above.
+            with urllib.request.urlopen(req, timeout=10) as response:  # nosec B310
                 return response.status == 200 or response.status == 204
         except Exception as e:
             print(f"Webhook error: {e}")
@@ -326,7 +330,9 @@ class AlertManager:
 
     def _generate_id(self) -> str:
         """Generate unique ID."""
-        return hashlib.md5(f"{time.time()}".encode()).hexdigest()[:12]
+        return hashlib.md5(
+            f"{time.time()}".encode(), usedforsecurity=False
+        ).hexdigest()[:12]
 
     # =========================================================================
     # Alert Management
@@ -621,7 +627,10 @@ class AlertManager:
         for callback in self._callbacks:
             try:
                 callback(notification)
-            except:
+            except Exception:
+                # A notification callback that raised must not stop the
+                # remaining callbacks. Exception, not bare: a bare except
+                # here would swallow KeyboardInterrupt too.
                 pass
 
         self._save_alerts()
@@ -713,7 +722,10 @@ class AlertManager:
         for callback in self._callbacks:
             try:
                 callback(notification)
-            except:
+            except Exception:
+                # A notification callback that raised must not stop the
+                # remaining callbacks. Exception, not bare: a bare except
+                # here would swallow KeyboardInterrupt too.
                 pass
 
     def notify_position_opened(self, symbol: str, side: str, qty: float, price: float):

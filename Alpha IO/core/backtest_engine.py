@@ -7,17 +7,14 @@ comprehensive performance analytics, and detailed reporting.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable, Any, Tuple
-from enum import Enum
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 from collections import defaultdict
 
-from core.market_data import MarketDataFeed, SimulatedDataFeed, OHLCV, TimeFrame
+from core.market_data import MarketDataFeed, SimulatedDataFeed, OHLCV
 from core.strategy import Strategy, StrategyOutput, StrategySignal, MarketData, StrategyEnsemble
-from core.risk import RiskManager, RiskConfig
-from core.execution import ExecutionEngine, ExecutionConfig, Order, OrderSide, OrderType
 
 
 @dataclass
@@ -566,7 +563,7 @@ def run_quick_backtest(
 
 
 if __name__ == "__main__":
-    from core.strategy import MomentumStrategy, TrendFollowingStrategy, create_default_ensemble
+    from core.strategy import MomentumStrategy, create_default_ensemble
 
     print("Running Backtest...")
     print("=" * 50)

@@ -17,11 +17,10 @@ import os
 import hashlib
 import threading
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any, Callable, Type, TypeVar, Union, get_type_hints
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Callable, Type, TypeVar
 from enum import Enum
 from abc import ABC, abstractmethod
-from datetime import datetime
 from pathlib import Path
 import copy
 
@@ -233,7 +232,8 @@ def create_api_schema() -> ConfigSchema:
     """Create API configuration schema."""
     schema = ConfigSchema("api")
 
-    schema.add_field("host", str, default="0.0.0.0")
+    # Loopback by default; see ATOS-P2-API-001.
+    schema.add_field("host", str, default="127.0.0.1")
     schema.add_field("port", int, default=8080, min_value=1, max_value=65535)
     schema.add_field("enable_auth", bool, default=True)
     schema.add_field("jwt_secret", str, secret=True, env_var="JWT_SECRET")
@@ -862,7 +862,7 @@ def test_config_manager():
         os.environ["TRADING_DEBUG"] = "true"
         env_store = EnvironmentConfigStore()
         env_config = env_store.load()
-        assert env_config.get("debug") == True
+        assert env_config.get("debug") is True
         del os.environ["TRADING_DEBUG"]
         print("   Environment variable loading works!")
 

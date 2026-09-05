@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.risk import (
-    RiskManager, RiskConfig, RiskLevel, RiskEvent, RiskMetrics, Position
+    RiskManager, RiskConfig, RiskLevel, RiskMetrics, Position
 )
 from datetime import datetime
 

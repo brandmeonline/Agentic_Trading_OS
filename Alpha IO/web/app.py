@@ -17,7 +17,7 @@ import copy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from functools import wraps
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 # Add parent to path
@@ -92,7 +92,10 @@ def _demo_marker(surface: str) -> Dict[str, Any]:
 @dataclass
 class WebConfig:
     """Web server configuration."""
-    host: str = "0.0.0.0"
+    # ATOS-P2-API-001 fixed the REST control plane's bind default and left
+    # this one behind. The dashboard is the more exposed of the two: it can
+    # place orders. Loopback by default; widening it is a deliberate act.
+    host: str = "127.0.0.1"
     port: int = 5000
     debug: bool = False
     secret_key: str = ""
@@ -268,61 +271,61 @@ class TradingState:
     def check_components(self):
         """Check which components are available."""
         try:
-            from core.config_manager import ConfigManager
+            from core.config_manager import ConfigManager  # noqa: F401 - availability probe
             self.components["config_manager"] = True
         except ImportError:
             pass
 
         try:
-            from core.credentials import CredentialsManager
+            from core.credentials import CredentialsManager  # noqa: F401 - availability probe
             self.components["credentials"] = True
         except ImportError:
             pass
 
         try:
-            from core.live_data import LiveDataManager
+            from core.live_data import LiveDataManager  # noqa: F401 - availability probe
             self.components["live_data"] = True
         except ImportError:
             pass
 
         try:
-            from core.database import DatabaseManager
+            from core.database import DatabaseManager  # noqa: F401 - availability probe
             self.components["database"] = True
         except ImportError:
             pass
 
         try:
-            from core.rest_api import RESTAPIServer
+            from core.rest_api import RESTAPIServer  # noqa: F401 - availability probe
             self.components["rest_api"] = True
         except ImportError:
             pass
 
         try:
-            from core.exchange_connectors import ExchangeConnector
+            from core.exchange_connectors import ExchangeConnector  # noqa: F401 - availability probe
             self.components["exchange_connectors"] = True
         except ImportError:
             pass
 
         try:
-            from core.alpaca_connector import AlpacaClient
+            from core.alpaca_connector import AlpacaClient  # noqa: F401 - availability probe
             self.components["alpaca_connector"] = True
         except ImportError:
             pass
 
         try:
-            from core.strategy import Strategy
+            from core.strategy import Strategy  # noqa: F401 - availability probe
             self.components["strategies"] = True
         except ImportError:
             pass
 
         try:
-            from core.orchestrator import TradingOrchestrator
+            from core.orchestrator import TradingOrchestrator  # noqa: F401 - availability probe
             self.components["orchestrator"] = True
         except ImportError:
             pass
 
         try:
-            from core.advanced_rl import PPOAgent
+            from core.advanced_rl import PPOAgent  # noqa: F401 - availability probe
             self.components["advanced_rl"] = True
         except ImportError:
             pass
@@ -554,7 +557,7 @@ class TradingState:
             return {"success": False, "error": execution.message,
                     "order": order.to_dict()}
 
-        except Exception as e:
+        except Exception:
             logger.exception("Alpaca order placement failed")
             return {"success": False, "error": "Order placement failed"}
 
@@ -1574,7 +1577,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "trigger_count": a.trigger_count,
                 "created_at": a.created_at
             } for a in alerts])
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/alerts", methods=["POST"])
@@ -1682,7 +1685,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "read": n.read,
                 "data": n.data
             } for n in notifications])
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/notifications/<notification_id>/read", methods=["POST"])
@@ -1721,7 +1724,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             from core.indicators import get_indicator_calculator
             calculator = get_indicator_calculator()
             return jsonify(calculator.list_indicators())
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/indicators/calculate", methods=["POST"])
@@ -1865,7 +1868,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     def api_list_strategies():
         """List strategies in marketplace."""
         try:
-            from core.marketplace import get_marketplace, StrategyCategory, StrategyVisibility
+            from core.marketplace import get_marketplace, StrategyCategory
             mp = get_marketplace()
 
             category = request.args.get("category")
@@ -1911,7 +1914,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 }
             } for s in strategies])
 
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/marketplace/strategies", methods=["POST"])
@@ -2129,7 +2132,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "badges": t.badges
             } for t in traders])
 
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     # ==========================================================================
@@ -2231,7 +2234,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
                 "expires_at": s.expires_at
             } for s in signals])
 
-        except Exception as e:
+        except Exception:
             return jsonify([])
 
     @app.route("/api/signals", methods=["POST"])
@@ -2907,7 +2910,7 @@ def load_stored_credentials():
 # =============================================================================
 
 def run_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 5000,
     debug: bool = False,
     admin_password: Optional[str] = None,
@@ -2951,7 +2954,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Agentic Trading OS Web Dashboard")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Host to bind to (default loopback; widen deliberately)")
     parser.add_argument("--port", type=int, default=5000, help="Port to listen on")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--password", default=None, help="Admin password for local startup")

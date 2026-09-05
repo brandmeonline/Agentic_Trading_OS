@@ -73,3 +73,9 @@ id_ed25519
 .env.*
 !.env.example
 !.env.template
+
+# Coverage artifacts (ATOS-P2-CI-001)
+coverage.json
+.coverage
+.coverage.*
+htmlcov/

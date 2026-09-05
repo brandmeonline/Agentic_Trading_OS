@@ -75,7 +75,7 @@ def main():
 
         if client.connect():
             account = client.get_account()
-            print(f"  ✓ Connected to Alpaca!")
+            print("  ✓ Connected to Alpaca!")
             print(f"    Account Status: {account.get('status', 'N/A')}")
             print(f"    Buying Power: ${float(account.get('buying_power', 0)):,.2f}")
             print(f"    Portfolio Value: ${float(account.get('portfolio_value', 0)):,.2f}")

@@ -12,17 +12,13 @@ Production-grade data infrastructure for trading systems:
 from __future__ import annotations
 
 import numpy as np
-import json
 import time
 import threading
-import queue
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable, Set
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
-from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import deque
-import hashlib
 
 
 # =============================================================================
@@ -981,7 +977,7 @@ if __name__ == "__main__":
             # Get statistics
             stats = manager.get_statistics("BTC/USDT")
             if stats:
-                print(f"\nBTC/USDT Stats:")
+                print("\nBTC/USDT Stats:")
                 print(f"  Mean: {stats.get('mean_price', 0):.2f}")
                 print(f"  Std: {stats.get('std_price', 0):.4f}")
                 print(f"  Ticks: {stats.get('tick_count', 0)}")

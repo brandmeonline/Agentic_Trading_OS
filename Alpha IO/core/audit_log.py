@@ -19,12 +19,11 @@ import threading
 import queue
 import gzip
 import os
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any, Callable, Union
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from collections import deque
 import traceback
 
 
@@ -599,7 +598,10 @@ class Logger:
     ):
         """Log audit event."""
         entry = AuditEntry(
-            id=hashlib.md5(f"{time.time()}{action.value}{resource_id}".encode()).hexdigest(),
+            id=hashlib.md5(
+                f"{time.time()}{action.value}{resource_id}".encode(),
+                usedforsecurity=False,
+            ).hexdigest(),
             timestamp=datetime.now(),
             action=action,
             category=self._action_to_category(action),

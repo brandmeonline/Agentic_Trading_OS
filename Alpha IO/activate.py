@@ -11,12 +11,10 @@ This script provides:
 
 import os
 import sys
-import json
 import time
 import getpass
 import argparse
 from pathlib import Path
-from datetime import datetime
 
 # Add paths
 sys.path.insert(0, str(Path(__file__).parent))
@@ -81,61 +79,61 @@ def check_system():
 
     # Check each component
     try:
-        from core.config_manager import ConfigManager
+        from core.config_manager import ConfigManager  # noqa: F401 - availability probe
         components["config_manager"] = True
     except ImportError:
         pass
 
     try:
-        from core.credentials import CredentialsManager
+        from core.credentials import CredentialsManager  # noqa: F401 - availability probe
         components["credentials"] = True
     except ImportError:
         pass
 
     try:
-        from core.live_data import LiveDataManager
+        from core.live_data import LiveDataManager  # noqa: F401 - availability probe
         components["live_data"] = True
     except ImportError:
         pass
 
     try:
-        from core.database import DatabaseManager
+        from core.database import DatabaseManager  # noqa: F401 - availability probe
         components["database"] = True
     except ImportError:
         pass
 
     try:
-        from core.rest_api import RESTAPIServer
+        from core.rest_api import RESTAPIServer  # noqa: F401 - availability probe
         components["rest_api"] = True
     except ImportError:
         pass
 
     try:
-        from core.exchange_connectors import ExchangeConnector
+        from core.exchange_connectors import ExchangeConnector  # noqa: F401 - availability probe
         components["exchange_connectors"] = True
     except ImportError:
         pass
 
     try:
-        from core.alpaca_connector import AlpacaClient
+        from core.alpaca_connector import AlpacaClient  # noqa: F401 - availability probe
         components["alpaca_connector"] = True
     except ImportError:
         pass
 
     try:
-        from core.strategy import Strategy
+        from core.strategy import Strategy  # noqa: F401 - availability probe
         components["strategies"] = True
     except ImportError:
         pass
 
     try:
-        from core.orchestrator import TradingOrchestrator
+        from core.orchestrator import TradingOrchestrator  # noqa: F401 - availability probe
         components["orchestrator"] = True
     except ImportError:
         pass
 
     try:
-        from core.advanced_rl import PPOAgent
+        from core.advanced_rl import PPOAgent  # noqa: F401 - availability probe
         components["advanced_rl"] = True
     except ImportError:
         pass
@@ -167,7 +165,7 @@ def setup_credentials_interactive():
     print("="*60)
 
     try:
-        from core.credentials import get_credentials_manager, TESTNET_ENDPOINTS
+        from core.credentials import get_credentials_manager, TESTNET_ENDPOINTS  # noqa: F401 - availability probe
     except ImportError:
         print("  ✗ Credentials module not available")
         return False
@@ -456,7 +454,7 @@ def quick_start_menu():
                     api_key = cred.get("api_key", "")
                     api_secret = cred.get("api_secret", "")
                     print("  Using stored Alpaca credentials")
-            except:
+            except Exception:
                 pass
 
             if not api_key:
@@ -528,7 +526,7 @@ def quick_start_menu():
                     api_key = cred.get("api_key", "")
                     api_secret = cred.get("api_secret", "")
                     print("  Using stored Alpaca credentials")
-            except:
+            except Exception:
                 pass
 
             if not api_key:
@@ -536,7 +534,7 @@ def quick_start_menu():
                 api_secret = input("  Secret Key: ").strip()
 
             try:
-                from core.alpaca_connector import create_alpaca_client, test_alpaca_client
+                from core.alpaca_connector import test_alpaca_client
                 test_alpaca_client(api_key, api_secret)
             except Exception as e:
                 print(f"\n  ✗ Connection failed: {e}")
@@ -547,7 +545,7 @@ def quick_start_menu():
                 from core.live_data import create_binance_client
                 client = create_binance_client()
                 ticker = client.get_ticker("BTCUSDT")
-                print(f"\n  ✓ Connection successful!")
+                print("\n  ✓ Connection successful!")
                 print(f"  BTC/USDT: ${ticker.price:,.2f}")
             except Exception as e:
                 print(f"\n  ✗ Connection failed: {e}")

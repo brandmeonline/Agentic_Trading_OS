@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable, Union
+from typing import Dict, List, Optional, Tuple, Any, Union
 from enum import Enum
 from abc import ABC, abstractmethod
-from datetime import datetime
 from collections import deque
-import copy
 
 
 # =============================================================================
@@ -448,7 +446,11 @@ class DQNAgent(RLAgent):
         """Load agent state."""
         import pickle
         with open(path, "rb") as f:
-            state = pickle.load(f)
+            # A model artifact is executable content, so loading one is
+            # trusting whoever wrote the file. Provenance and artifact
+            # hashing are ATOS-P3-ML-001; until then, only load files
+            # this deployment wrote itself.
+            state = pickle.load(f)  # nosec B301
         self.q_network.set_params(state["q_network"])
         self.target_network.set_params(state["target_network"])
         self.epsilon = state["epsilon"]
@@ -557,8 +559,9 @@ class PPOAgent(RLAgent):
                 # Entropy bonus
                 entropy = -np.sum(probs * np.log(probs + 1e-8), axis=1).mean()
 
-                # Total loss
-                loss = policy_loss + self.config.value_coef * value_loss - self.config.entropy_coef * entropy
+                # The actor and critic are updated from their own
+                # gradients below, and each component loss is accumulated
+                # separately, so no combined scalar is needed here.
 
                 # Backward pass for actor
                 actor_grad = np.zeros_like(logits)
@@ -648,7 +651,11 @@ class PPOAgent(RLAgent):
         """Load agent state."""
         import pickle
         with open(path, "rb") as f:
-            state = pickle.load(f)
+            # A model artifact is executable content, so loading one is
+            # trusting whoever wrote the file. Provenance and artifact
+            # hashing are ATOS-P3-ML-001; until then, only load files
+            # this deployment wrote itself.
+            state = pickle.load(f)  # nosec B301
         self.actor.set_params(state["actor"])
         self.critic.set_params(state["critic"])
         self.training_steps = state["training_steps"]
@@ -740,8 +747,8 @@ class A2CAgent(RLAgent):
         # Entropy bonus
         entropy = -np.sum(probs * np.log(probs + 1e-8), axis=1).mean()
 
-        # Total loss
-        loss = policy_loss + self.config.value_coef * value_loss - self.config.entropy_coef * entropy
+        # As above: the heads are updated from their own gradients, so the
+        # combined objective is never materialised.
 
         # Backward pass
         # Actor head gradient
@@ -791,7 +798,11 @@ class A2CAgent(RLAgent):
         """Load agent state."""
         import pickle
         with open(path, "rb") as f:
-            state = pickle.load(f)
+            # A model artifact is executable content, so loading one is
+            # trusting whoever wrote the file. Provenance and artifact
+            # hashing are ATOS-P3-ML-001; until then, only load files
+            # this deployment wrote itself.
+            state = pickle.load(f)  # nosec B301
         self.features.set_params(state["features"])
         self.actor_head.weights, self.actor_head.bias = state["actor_head"]
         self.critic_head.weights, self.critic_head.bias = state["critic_head"]
@@ -963,7 +974,11 @@ class SACAgent(RLAgent):
         """Load agent state."""
         import pickle
         with open(path, "rb") as f:
-            state = pickle.load(f)
+            # A model artifact is executable content, so loading one is
+            # trusting whoever wrote the file. Provenance and artifact
+            # hashing are ATOS-P3-ML-001; until then, only load files
+            # this deployment wrote itself.
+            state = pickle.load(f)  # nosec B301
         self.actor.set_params(state["actor"])
         self.q1.set_params(state["q1"])
         self.q2.set_params(state["q2"])
