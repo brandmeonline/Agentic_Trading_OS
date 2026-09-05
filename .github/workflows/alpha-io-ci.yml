@@ -98,6 +98,7 @@ jobs:
             core/swarm_arbitration.py \
             core/tuning_governance.py \
             core/auto_tuner.py \
+            core/venue_rules.py \
             core/alerting.py
 
       # Production code at medium severity and above. Every finding is either

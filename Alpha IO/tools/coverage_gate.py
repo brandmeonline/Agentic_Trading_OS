@@ -61,6 +61,7 @@ FLOORS: Dict[str, Tuple[int, str]] = {
     "core/swarm_arbitration.py": (90, ""),
     "core/tuning_governance.py": (90, ""),
     "core/auto_tuner.py": (90, ""),
+    "core/venue_rules.py": (90, ""),
 
     # Operator-facing truth.
     "core/operator_status.py": (95, ""),

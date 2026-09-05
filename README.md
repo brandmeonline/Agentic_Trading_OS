@@ -5,12 +5,26 @@ It supports:
 
 Crypto, macro, and equities domains
 Real-time signal ingestion
-Swarm-based decision arbitration
+Swarm-based decision arbitration (governed: see core/swarm_arbitration.py)
 Asymmetry scoring to detect rare alpha
-Execution via futures, options, spreads
 Geographic and global trend overlays
-Dynamic confidence and risk tuning
-Designed to outperform institutional bots by operating higher in the signal funnel at a fraction of the cost.
+Dynamic confidence and risk tuning - tightening only; loosening a limit
+requires out-of-sample evidence and a named approver (core/tuning_governance.py)
+
+## What can actually be executed
+
+Live execution supports **equities and crypto** only.
+
+Futures, options and spreads are **research output, not executable**. This
+line used to read "Execution via futures, options, spreads"; the code behind
+that claim returns hardcoded structures and the system has none of the
+semantics they need - no contract multipliers, no expiry or roll handling, no
+margin model, no assignment or exercise, no Greeks, no open-interest limits.
+`core/precision_trade_planner.py` still produces those structures as research
+notes, stamped `executable: False`, and its `plan_for_execution()` raises.
+`SafetyConfig` refuses a live configuration with `allow_options` or
+`allow_futures` set. The full list of what is missing is
+`MISSING_SEMANTICS` in `core/venue_rules.py`.
 
 Credentials
 Never commit credentials. The authoritative source is the environment:
@@ -42,7 +56,7 @@ core/score_signals.py: Correlates tweet timing with price
 core/auto_tuner.py: Learns when to be aggressive
 core/asymmetry_index.py: Measures signal uniqueness
 core/signal_memory.py: Long-term signal embedding
-core/precision_trade_planner.py: Maps alpha to futures/options
+core/precision_trade_planner.py: Maps alpha to futures/options structures as RESEARCH OUTPUT ONLY (not executable; see "What can actually be executed")
 core/signal_router.py: Chooses trade, watchlist, or ignore
 core/news_feed.py: RSS/Atom/EDGAR ingestion and the rolling crowding corpus
 core/llm_client.py: Single access point for the openai>=1.0 SDK# Agentic_Trading_OS
