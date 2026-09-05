@@ -48,3 +48,28 @@ Alpha IO/config/*.sqlite
 Alpha IO/config/*.sqlite3
 Alpha IO/config/*.db
 Alpha IO/config/*.tmp
+
+# Credentials (ATOS-P0-SEC-001)
+# Never track real secrets. *.example.json files are the only credential-shaped
+# files allowed in git, and they must contain non-secret placeholders only.
+Alpha IO/config/*credentials*.json
+!Alpha IO/config/*credentials*.example.json
+Alpha IO/config/*.credentials
+Alpha IO/config/*.key
+Alpha IO/config/*.pem
+Alpha IO/config/*.salt
+Alpha IO/config/*.enc
+Alpha IO/config/.master_key
+**/credentials.json
+**/secrets.json
+**/*_credentials.json
+!**/*_credentials.example.json
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ecdsa
+id_ed25519
+.env.*
+!.env.example
+!.env.template

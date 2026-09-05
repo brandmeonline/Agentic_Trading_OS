@@ -14,7 +14,7 @@ import threading
 import secrets
 import logging
 import copy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from functools import wraps
 from dataclasses import dataclass, asdict
@@ -1049,6 +1049,18 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
         service = _feed_service()
         return service.corpus if service is not None else None
 
+    def _service_clock():
+        """The clock the ingestion service runs on.
+
+        Readers must agree with the writer about what "now" is. The corpus
+        ages items out against the feed service's clock, so anything that
+        computes a recency window over that corpus has to use the same clock
+        or it will disagree about which items are still current.
+        """
+        service = _feed_service()
+        clock = getattr(service, "_clock", None) if service is not None else None
+        return clock if callable(clock) else (lambda: datetime.now(timezone.utc))
+
     @app.route("/terminal")
     @login_required
     def terminal():
@@ -1093,7 +1105,7 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
 
         try:
             from core.reports import BriefGenerator
-            brief = BriefGenerator(corpus=corpus).generate()
+            brief = BriefGenerator(corpus=corpus, clock=_service_clock()).generate()
             return jsonify({
                 "available": True,
                 "candidates": [c.to_dict() for c in brief.candidates],
@@ -2525,28 +2537,43 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
 # =============================================================================
 
 def load_stored_credentials():
-    """Load credentials from config file."""
+    """Load Alpaca credentials, preferring environment variables.
+
+    ATOS-P0-SEC-001: the environment is the authoritative credential source.
+    A local config file is a development-only fallback; it is gitignored and
+    must never be committed. Only the credential *source* is logged, never a
+    key, a secret, or any fragment of one.
+    """
     config_file = Path(__file__).parent.parent / "config" / "alpaca_credentials.json"
 
-    if config_file.exists():
+    api_key = os.environ.get("ALPACA_API_KEY", "").strip()
+    api_secret = os.environ.get("ALPACA_API_SECRET", "").strip()
+    source = "environment"
+
+    if not (api_key and api_secret) and config_file.exists():
         try:
             with open(config_file) as f:
                 data = json.load(f)
                 cred = data.get("alpaca_paper", {})
-                trading_state.alpaca_api_key = cred.get("api_key", "")
-                trading_state.alpaca_api_secret = cred.get("api_secret", "")
-                print(f"  Loaded Alpaca credentials from {config_file}")
-
-                # Try to connect to Alpaca
-                if trading_state.alpaca_api_key:
-                    print("  Connecting to Alpaca...")
-                    if trading_state.connect_alpaca():
-                        print("  ✓ Connected to Alpaca")
-                    else:
-                        print("  ⚠ Alpaca connection pending (will connect when network available)")
-
+                api_key = cred.get("api_key", "").strip()
+                api_secret = cred.get("api_secret", "").strip()
+                source = "local development file"
         except Exception as e:
-            print(f"  Failed to load credentials: {e}")
+            # Never interpolate credential content into an error message.
+            print(f"  Failed to load credentials: {type(e).__name__}")
+
+    if api_key and api_secret:
+        trading_state.alpaca_api_key = api_key
+        trading_state.alpaca_api_secret = api_secret
+        print(f"  Loaded Alpaca credentials from {source}")
+
+        print("  Connecting to Alpaca...")
+        if trading_state.connect_alpaca():
+            print("  ✓ Connected to Alpaca")
+        else:
+            print("  ⚠ Alpaca connection pending (will connect when network available)")
+    else:
+        print("  No Alpaca credentials found (set ALPACA_API_KEY / ALPACA_API_SECRET)")
 
     # Check components
     trading_state.check_components()

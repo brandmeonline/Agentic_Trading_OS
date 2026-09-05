@@ -1,19 +1,42 @@
 name: Alpha IO CI
 
+# ATOS-P0-SEC-001: no path filters. A credential can be committed anywhere in
+# the tree, so the secret scan must run on every push and pull request rather
+# than only when "Alpha IO/**" happens to change.
 on:
   pull_request:
-    paths:
-      - "Alpha IO/**"
-      - ".github/workflows/alpha-io-ci.yml"
   push:
     branches:
       - main
-    paths:
-      - "Alpha IO/**"
-      - ".github/workflows/alpha-io-ci.yml"
 
 jobs:
+  secret-scan:
+    name: Secret hygiene (ATOS-P0-SEC-001)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the scan sees the tree as published, not a
+          # shallow slice of it.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install scan dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Scan tracked files for credentials
+        run: python -m pytest -q "Alpha IO/tests/test_secret_hygiene.py"
+
   regression:
+    needs: secret-scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -56,6 +79,7 @@ jobs:
             "Alpha IO/tests/test_rest_api_security.py" \
             "Alpha IO/tests/test_risk.py" \
             "Alpha IO/tests/test_run_web_security.py" \
+            "Alpha IO/tests/test_secret_hygiene.py" \
             "Alpha IO/tests/test_services.py" \
             "Alpha IO/tests/test_terminal_view.py" \
             "Alpha IO/tests/test_unified_engine.py" \

@@ -12,6 +12,24 @@ Geographic and global trend overlays
 Dynamic confidence and risk tuning
 Designed to outperform institutional bots by operating higher in the signal funnel at a fraction of the cost.
 
+Credentials
+Never commit credentials. The authoritative source is the environment:
+
+  export ALPACA_API_KEY=...
+  export ALPACA_API_SECRET=...
+
+For local development only, copy `Alpha IO/config/alpaca_credentials.example.json`
+to `Alpha IO/config/alpaca_credentials.json` and fill it in. That path is
+gitignored and must stay untracked.
+
+A credential that has ever been committed is compromised. Deleting the file
+does not undo the exposure -- the key must be REVOKED and replaced at the
+provider. This applies even to paper-only, expired, or seemingly unused keys.
+See docs/runbooks/credential-incident.md.
+
+CI fails the build if a credential-shaped secret appears in tracked content
+(`Alpha IO/tests/test_secret_hygiene.py`).
+
 Quick Start
 pip install -r requirements.txt
 cp .env.template .env  # Fill in your API keys
