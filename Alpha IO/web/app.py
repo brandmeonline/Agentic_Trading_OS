@@ -422,31 +422,77 @@ class TradingState:
             self.add_error(f"Alpaca positions fetch failed: {exc}", "alpaca")
             return []
 
-    def place_order(self, symbol: str, qty: int, side: str,
-                    order_type: str = "market", limit_price: float = None) -> Dict:
-        """Place an order via Alpaca."""
+    def submit_manual_order(self, symbol: str, qty: int, side: str,
+                            order_type: str = "market",
+                            limit_price: float = None) -> Dict:
+        """Submit an operator-initiated order through the execution boundary.
+
+        Named distinctly from the broker's own ``place_order`` on purpose: the
+        two used to share a name, and that is part of how a direct broker call
+        hid here in plain sight. A reader - or a static check - can now tell
+        the safe path from the unsafe one by the name alone.
+
+        ATOS-P1-AGENT-001. This method used to call
+        ``alpaca_client.place_market_order`` directly, which meant a dashboard
+        button could create real exposure while skipping every control the
+        system has: the durable order-intent WAL, the order lifecycle state
+        machine, idempotency, the risk engine, the runtime state machine and
+        live authorization. None of those can protect an order that never
+        passes through them.
+
+        It now routes through ExecutionEngine, and refuses when no engine is
+        attached rather than falling back to the broker. A dashboard that
+        cannot reach the safe path must not reach the unsafe one instead.
+        """
+        engine = getattr(self, "execution_engine", None)
+        if engine is None:
+            return {
+                "success": False,
+                "error": (
+                    "Order refused: no execution engine is attached to the "
+                    "dashboard. Manual orders must pass through the execution "
+                    "boundary (WAL, lifecycle, idempotency, risk, "
+                    "authorization); placing them directly against the broker "
+                    "is not available."
+                ),
+            }
+
         if not self.alpaca_client or not self.alpaca_connected:
             return {"success": False, "error": "Not connected to Alpaca"}
 
         try:
-            if order_type == "market":
-                result = self.alpaca_client.place_market_order(symbol, qty, side)
-            else:
-                result = self.alpaca_client.place_limit_order(symbol, qty, side, limit_price)
+            from core.execution import OrderSide, OrderType
 
-            if result:
-                self.add_trade({
-                    "time": datetime.now().isoformat(),
-                    "symbol": symbol,
-                    "side": side,
-                    "qty": qty,
-                    "type": order_type,
-                    "price": limit_price or 0,
-                    "status": "submitted"
-                })
-                return {"success": True, "order": result}
-            else:
-                return {"success": False, "error": "Order failed"}
+            try:
+                order_side = OrderSide(str(side).lower())
+            except ValueError:
+                return {"success": False, "error": f"Unrecognised side {side!r}"}
+
+            order = engine.create_order(
+                asset=symbol,
+                side=order_side,
+                quantity=float(qty),
+                order_type=(
+                    OrderType.MARKET if order_type == "market" else OrderType.LIMIT
+                ),
+                price=limit_price,
+                strategy="manual-dashboard",
+            )
+            execution = engine.submit_order(order)
+
+            self.add_trade({
+                "time": datetime.now().isoformat(),
+                "symbol": symbol,
+                "side": side,
+                "qty": qty,
+                "type": order_type,
+                "price": limit_price or 0,
+                "status": order.status.value,
+            })
+            if execution.success:
+                return {"success": True, "order": order.to_dict()}
+            return {"success": False, "error": execution.message,
+                    "order": order.to_dict()}
 
         except Exception as e:
             logger.exception("Alpaca order placement failed")
@@ -1015,7 +1061,9 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             if order_type not in {"market", "limit", "stop", "stop_limit"}:
                 return jsonify({"success": False, "error": "Invalid order type"})
 
-            result = trading_state.place_order(symbol, qty, side, order_type, limit_price)
+            result = trading_state.submit_manual_order(
+                symbol, qty, side, order_type, limit_price
+            )
             return jsonify(result)
 
         except Exception as e:

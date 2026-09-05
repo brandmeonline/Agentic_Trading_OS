@@ -65,6 +65,7 @@ jobs:
           python -m pytest -q \
             "Alpha IO/tests/test_advanced_modules.py" \
             "Alpha IO/tests/test_agent.py" \
+            "Alpha IO/tests/test_agent_authority_boundary.py" \
             "Alpha IO/tests/test_asymmetry_measured.py" \
             "Alpha IO/tests/test_broker_reconciliation.py" \
             "Alpha IO/tests/test_cancel_fill_race.py" \
