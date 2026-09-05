@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from core.money import InstrumentGrid, coerce_legacy
+
 logger = logging.getLogger(__name__)
 
 #: Absolute tolerance for quantity comparison. ATOS-P1-NUM-001 replaces this
@@ -253,11 +255,28 @@ class ReconciliationEngine:
         cash_tolerance: float = CASH_TOLERANCE,
         max_snapshot_age: timedelta = DEFAULT_MAX_SNAPSHOT_AGE,
         expected_account_fingerprint: Optional[str] = None,
+        grids: Optional[Dict[str, InstrumentGrid]] = None,
     ) -> None:
         self.quantity_tolerance = quantity_tolerance
         self.cash_tolerance = cash_tolerance
         self.max_snapshot_age = max_snapshot_age
         self.expected_account_fingerprint = expected_account_fingerprint
+        # ATOS-P1-NUM-001: when a venue grid is known for an instrument, two
+        # quantities are equal if the venue cannot express the difference.
+        # The float tolerance above is the fallback for instruments whose
+        # grid has not been supplied, and is either too tight or too loose
+        # depending on the venue - which is exactly why grids exist.
+        self.grids: Dict[str, InstrumentGrid] = dict(grids or {})
+
+    def _quantities_agree(self, instrument: str, left: Any, right: Any) -> bool:
+        """Compare on the venue's grid when we know it, else on tolerance."""
+        grid = self.grids.get(instrument)
+        if grid is not None:
+            return grid.quantities_equal(
+                coerce_legacy(left, field="local_quantity"),
+                coerce_legacy(right, field="broker_quantity"),
+            )
+        return abs(float(left) - float(right)) <= self.quantity_tolerance
 
     def reconcile(
         self,
@@ -437,7 +456,7 @@ class ReconciliationEngine:
         for instrument in sorted(set(local.positions) | set(broker.positions)):
             local_qty = float(local.positions.get(instrument, 0.0))
             broker_qty = float(broker.positions.get(instrument, 0.0))
-            if abs(local_qty - broker_qty) <= self.quantity_tolerance:
+            if self._quantities_agree(instrument, local_qty, broker_qty):
                 continue
             mismatches.append(Mismatch(
                 MismatchClass.POSITION_MISMATCH,
