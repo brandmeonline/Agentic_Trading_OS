@@ -134,9 +134,11 @@ names and value shapes both. Credential paths are in `.gitignore` and
 `.dockerignore`, and a blocking CI job fails the build on a tracked
 credential. Access logs and credential listings carry metadata only.
 
-*Outstanding, and not a code issue:* the key exposed in
-ATOS-P0-SEC-001 has still not been revoked by the owner. Until it is, Gate 0
-is open regardless of what the code now does.
+*Outstanding, and not a code issue:* the key exposed in ATOS-P0-SEC-001 has
+not been revoked. On 2026-09-05 the owner elected to continue with the
+integration and defer revocation; it is tracked as **M-001** in
+`docs/MAINTENANCE.md` with the conditions that turn it back into a blocker.
+The deferral changes who is accountable for the exposure, not the exposure.
 
 ### 17. Can backtest leakage make a strategy appear promotable?
 
@@ -175,21 +177,39 @@ at all, readiness reports 503.
 Nineteen of twenty were "no" on this pass; the twentieth is now "no" and
 pinned. That is the code's answer.
 
-**Unattended live trading remains NO-GO,** for reasons outside the code:
+### Owner decisions taken, 2026-09-05
 
-1. **Gate 0 is open.** The Alpaca key committed in this repository has not
-   been revoked. No amount of hardening addresses a key an unknown number of
-   people can read.
-2. **No capital tier has been granted.** The ladder is implemented and the
-   grant is L0, which authorises nothing. Reaching L1 needs the P0 and P1
-   gates plus clean broker reconciliation, approved by name.
-3. **No external alerting channel is configured.** The manager accepts any
-   callable and the redaction is tested, but nothing is wired to a pager, so
-   an operator-action condition at 02:00 reaches a log file.
-4. **The governance objects are not all wired into the running path.** The
-   model registry, the swarm arbiter and the tuning registry are implemented
-   and tested; nothing in this repository currently routes a model or a swarm
-   to execution, which is why that gap was survivable, and it has to be
-   closed by whatever first does.
+**Capital tier L1 granted** — $10.00 maximum real capital at risk. The
+evidence, and which parts of it were verified rather than attested, is in
+`docs/decisions/2026-09-05-capital-tier-L1.md`.
 
-Items 1 and 2 are owner decisions. Items 3 and 4 are work.
+**Gate 0 deferred, not closed.** The owner elected to continue with the
+Alpaca integration and defer revoking the exposed key. Tracked as **M-001**
+in `docs/MAINTENANCE.md`, whose escalation conditions include *"a capital
+tier above L1 is sought"* — so L1 and the deferral coexist deliberately, and
+L2 does not.
+
+These two interact, and the interaction is worth stating plainly rather than
+leaving for someone to discover: the $10.00 ceiling bounds what *this system*
+will risk. It does not bound what a third party holding the key can do with
+the account. Those are independent, and only the first is under this
+repository's control.
+
+### Unattended live trading remains NO-GO
+
+1. **No external alerting channel is configured** (M-003). The manager
+   accepts any callable and the redaction is tested, but nothing is wired to
+   a pager, so an operator-action condition at 02:00 reaches a log file. For
+   *unattended* operation this is the binding constraint.
+2. **The governance objects are not all wired into the running path**
+   (M-004). The model registry, the swarm arbiter and the tuning registry are
+   implemented and tested; nothing currently routes a model or a swarm to
+   execution, which is why that gap was survivable, and it has to be closed
+   by whatever first does.
+3. **The ledger stores money as SQLite `REAL`** (M-002). Its own escalation
+   condition — any real capital traded — is now reachable.
+
+Supervised L1 operation is a different question from unattended operation,
+and the ladder's design says so: L1's evidence is about the P0/P1 gates and
+reconciliation, not about running alone. Nothing above L1 should be sought
+while items 1 to 3 stand.

@@ -100,6 +100,7 @@ jobs:
             core/auto_tuner.py \
             core/venue_rules.py \
             core/capital_ladder.py \
+            tools/grant_capital_tier.py \
             core/alerting.py
 
       # Production code at medium severity and above. Every finding is either
@@ -156,7 +157,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           python -m pytest -q -p no_network "Alpha IO/tests" \
-            --cov=core --cov-report=json:coverage.json --cov-report=term
+            --cov=core --cov=tools --cov-report=json:coverage.json --cov-report=term
 
       - name: Adversarial suite (ATOS-P0-EXEC-001)
         env:

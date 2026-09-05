@@ -63,6 +63,8 @@ FLOORS: Dict[str, Tuple[int, str]] = {
     "core/auto_tuner.py": (90, ""),
     "core/venue_rules.py": (90, ""),
     "core/capital_ladder.py": (90, ""),
+    "tools/grant_capital_tier.py": (75, "the live broker reconciliation "
+                                        "path cannot run without an account"),
 
     # Operator-facing truth.
     "core/operator_status.py": (95, ""),

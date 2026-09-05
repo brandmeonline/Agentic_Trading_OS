@@ -79,3 +79,10 @@ coverage.json
 .coverage
 .coverage.*
 htmlcov/
+
+# Capital ladder grants are deployment state carrying spend authority.
+# ATOS-P3-CAP-001: never tracked, in any environment.
+data/capital_ladder.json
+data/*capital_ladder*.json
+**/capital_ladder.json
+**/*.attestation.json
