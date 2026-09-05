@@ -121,6 +121,11 @@ from core.reconciliation import (
     LocalSnapshot,
     ReconciliationEngine,
 )
+from core.readiness import (
+    ReadinessReport,
+    evaluate_readiness,
+    liveness,
+)
 from core.runtime_state import (
     LiveStartupSequence,
     RuntimeState,
@@ -279,6 +284,19 @@ class EventBus:
         self._running = False
         if self._processor_thread:
             self._processor_thread.join(timeout=5.0)
+
+    def is_alive(self) -> bool:
+        """Whether events published now would actually be processed.
+
+        ATOS-P2-DEPLOY-001 needs this: a bus whose processor thread has died
+        still accepts publish() without complaint, so every subsequent event
+        goes into a queue nobody reads. Readiness has to be able to notice.
+        """
+        return bool(
+            self._running
+            and self._processor_thread is not None
+            and self._processor_thread.is_alive()
+        )
 
     def _process_events(self):
         """Process events from queue."""
@@ -842,6 +860,81 @@ class TradingOrchestrator:
             "no persisted capital tier (ATOS-P3-CAP-001); initial_capital is a "
             "number, not spend authority"
         )
+
+    # -- readiness --------------------------------------------------------
+    #
+    # ATOS-P2-DEPLOY-001. Liveness is answered by the process responding at
+    # all; readiness is answered here, and the two must not be confused. Most
+    # of the evidence is the startup gauntlet's, reused: a requirement that
+    # had to hold before the system started is not one that stops mattering
+    # once it has.
+
+    def readiness_evidence(self) -> Dict[str, Any]:
+        """Everything the readiness probe can establish right now."""
+        return {
+            "persistence_healthy": self._check_durable_storage,
+            "broker_auth_healthy": self._check_broker_auth,
+            "expected_account_confirmed": self._check_broker_account,
+            "reconciliation_fresh_and_matched": self._check_reconciliation,
+            "data_healthy": self._check_market_data_health,
+            "no_unresolved_order_intents": self._check_unresolved_intents,
+            "no_risk_trip": self._check_risk_anchors,
+            "capital_tier_valid": self._check_capital_tier,
+            "strategy_promotion_valid": self._check_strategy_promotion,
+            "event_loops_healthy": self._check_event_loops,
+            "execution_adapter_healthy": self._check_execution_adapter,
+        }
+
+    def readiness(self) -> ReadinessReport:
+        """Whether this process may add new risk, and what is stopping it."""
+        return evaluate_readiness(
+            self.readiness_evidence(),
+            live=self.config.mode == TradingMode.LIVE,
+        )
+
+    def liveness(self) -> Dict[str, Any]:
+        """Whether the process is answering. Says nothing about safety."""
+        return liveness(self.state.start_time)
+
+    def _check_strategy_promotion(self):
+        # ATOS-P3-TUNE-001 supplies champion/challenger promotion records.
+        if self.strategies is None:
+            return False, "no strategy ensemble loaded"
+        return False, (
+            "no promotion record for the running strategy "
+            "(ATOS-P3-TUNE-001); a loaded strategy is not an approved one"
+        )
+
+    def _check_event_loops(self):
+        """Threads the system needs in order to notice anything.
+
+        A dead price thread is the quiet failure: the system keeps answering,
+        keeps its last known prices, and trades on them.
+        """
+        if not self._running:
+            return False, "the system is not running"
+
+        dead = []
+        if self._price_thread is None or not self._price_thread.is_alive():
+            dead.append("price")
+        if self.config.enable_strategies and (
+            self._strategy_thread is None or not self._strategy_thread.is_alive()
+        ):
+            dead.append("strategy")
+        if self.event_bus is not None and not self.event_bus.is_alive():
+            dead.append("event bus")
+
+        if dead:
+            return False, "not running: " + ", ".join(dead)
+        return True, "price, strategy and event loops are alive"
+
+    def _check_execution_adapter(self):
+        client = self.alpaca_client
+        if client is None and self.exchange is None:
+            return False, "no execution adapter is attached"
+        if client is not None and not getattr(client, "connected", False):
+            return False, "the Alpaca adapter is attached but not connected"
+        return True, "an execution adapter is connected"
 
     def stop(self):
         """Stop the trading system gracefully."""

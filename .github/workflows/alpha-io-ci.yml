@@ -78,6 +78,7 @@ jobs:
             "Alpha IO/tests/test_daily_drawdown_recovery.py" \
             "Alpha IO/tests/test_dashboard_trust.py" \
             "Alpha IO/tests/test_decimal_money.py" \
+            "Alpha IO/tests/test_deployment_readiness.py" \
             "Alpha IO/tests/test_headroom_compress.py" \
             "Alpha IO/tests/test_ledger_execution.py" \
             "Alpha IO/tests/test_live_activation_fail_closed.py" \

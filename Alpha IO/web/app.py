@@ -36,6 +36,11 @@ except ImportError:
     print("Flask not installed. Run: pip install flask")
 
 
+from core.readiness import (
+    ReadinessReport,
+    evaluate_readiness,
+    liveness,
+)
 from core.operator_status import (
     DEFAULT_DATA_FRESHNESS,
     BrokerKind,
@@ -978,6 +983,24 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
             logger.exception("Operator status could not be assembled")
             return {"operator_status": OperatorStatus().to_dict()}
 
+    def _readiness_report() -> ReadinessReport:
+        """Readiness for the dashboard process.
+
+        With no orchestrator attached there is nothing to establish, so the
+        report is built from empty evidence — which evaluates to every
+        requirement unsatisfied. That is the honest answer for a dashboard
+        that is not driving a trading system, and it is deliberately not
+        special-cased into "ready".
+        """
+        orchestrator = trading_state.orchestrator
+        if orchestrator is None or not hasattr(orchestrator, "readiness_evidence"):
+            return evaluate_readiness({}, live=False)
+        try:
+            return orchestrator.readiness()
+        except Exception:
+            logger.exception("Readiness evaluation failed")
+            return evaluate_readiness({}, live=False)
+
     @app.route("/api/operator-status")
     @login_required
     def api_operator_status():
@@ -1053,13 +1076,44 @@ def create_app(config: Optional[WebConfig] = None) -> Flask:
     # ==========================================================================
     @app.route("/api/health")
     def api_health():
-        """Public health endpoint for uptime checks."""
-        return jsonify({
+        """Liveness. ATOS-P2-DEPLOY-001.
+
+        Answers "is this process wedged" and nothing else. It must not consult
+        readiness: a trading system that is unsafe to trade is usually worse
+        off restarted, because the restart discards whatever it had
+        established about the broker's book.
+        """
+        payload = dict(liveness(trading_state.start_time))
+        payload.update({
             "status": "ok",
+            "probe": "liveness",
             "service": "agentic-trading-web",
             "version": "1.0.0",
-            "timestamp": datetime.now().isoformat()
+            # Kept from the published contract that uptime monitors already
+            # depend on. Nothing about it is unsafe, so there is no reason to
+            # break it while adding the fields above.
+            "timestamp": payload["at"],
         })
+        return jsonify(payload)
+
+    @app.route("/api/ready")
+    def api_ready():
+        """Readiness for a process manager: the verdict and a count.
+
+        Unauthenticated, because a probe cannot log in — so it reports no
+        internal state. 503 when not ready, which is what stops a load
+        balancer routing to a system that must not take new risk.
+        """
+        report = _readiness_report()
+        return jsonify({**report.public_dict(), "probe": "readiness"}), \
+            report.http_status
+
+    @app.route("/api/readiness")
+    @login_required
+    def api_readiness():
+        """The same verdict with its reasons, for an operator."""
+        report = _readiness_report()
+        return jsonify(report.to_dict()), report.http_status
 
 
     @app.route("/api/stats")

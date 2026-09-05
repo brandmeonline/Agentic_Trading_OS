@@ -760,13 +760,59 @@ class RESTAPIServer:
         # Register routes
         self._register_routes()
 
+    def get_readiness(self, request: "APIRequest", params: Dict) -> "APIResponse":
+        """Readiness verdict for a process manager.
+
+        Fail-closed in every direction: no trading system attached is not
+        ready, and a readiness computation that raises is not ready either.
+        An exception here means the system could not establish that it is
+        safe, which is exactly the case the probe exists to catch.
+        """
+        system = getattr(self.handlers, "trading_system", None)
+        if system is None or not hasattr(system, "readiness"):
+            return APIResponse(503, {
+                "ready": False,
+                "blocking_count": 1,
+                "probe": "readiness",
+            })
+        try:
+            report = system.readiness()
+        except Exception:
+            logger.exception("Readiness evaluation failed")
+            return APIResponse(503, {
+                "ready": False, "blocking_count": 1, "probe": "readiness",
+            })
+        body = dict(report.public_dict())
+        body["probe"] = "readiness"
+        return APIResponse(report.http_status, body)
+
     def _register_routes(self):
         """Register all API routes."""
         # Public endpoints
+        # ATOS-P2-DEPLOY-001: liveness only. This answers "is the process
+        # wedged", and deliberately cannot consult readiness - a system that
+        # is unsafe to trade must not be restarted for it, because the restart
+        # discards what it had established about the broker's book.
         self.router.add_route(
             "/api/v1/health",
             "GET",
-            lambda req, params: APIResponse(200, {"status": "ok"}),
+            lambda req, params: APIResponse(200, {
+                "status": "ok",
+                "probe": "liveness",
+                "note": "says nothing about whether the system may trade; "
+                        "see /api/v1/ready",
+            }),
+            auth_required=False
+        )
+
+        # Readiness: whether the system may add new risk. Unauthenticated
+        # because a process manager has to reach it, so it reports only the
+        # verdict and a count - the reasons are internal state and stay behind
+        # the authenticated dashboard route.
+        self.router.add_route(
+            "/api/v1/ready",
+            "GET",
+            self.get_readiness,
             auth_required=False
         )
 
