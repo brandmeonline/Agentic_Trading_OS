@@ -16,3 +16,11 @@ pip-audit==2.10.1
 pytest==9.1.1
 pytest-cov==7.1.0
 coverage==7.16.0
+
+# Pinned here as well as declared in requirements.txt, because mypy's result
+# depends on the version of numpy's bundled stubs: CI failed on a
+# `floating[Any] | int` assignment that a different numpy typed as `float`,
+# with the same mypy version. A static gate whose verdict changes without the
+# code changing is a gate people learn to ignore. requirements.txt still
+# states the range the application supports; this pins what the checks see.
+numpy==2.4.6

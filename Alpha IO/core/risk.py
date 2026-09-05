@@ -624,8 +624,14 @@ class RiskManager:
             # VaR and Expected Shortfall
             sorted_returns = sorted(returns)
             var_index = int(len(sorted_returns) * 0.05)
-            metrics.var_95 = abs(sorted_returns[var_index]) if var_index < len(sorted_returns) else 0
-            metrics.expected_shortfall = abs(np.mean(sorted_returns[:var_index + 1])) if var_index > 0 else 0
+            metrics.var_95 = (
+                float(abs(sorted_returns[var_index]))
+                if var_index < len(sorted_returns) else 0.0
+            )
+            metrics.expected_shortfall = (
+                float(abs(np.mean(sorted_returns[:var_index + 1])))
+                if var_index > 0 else 0.0
+            )
 
         return metrics
 
