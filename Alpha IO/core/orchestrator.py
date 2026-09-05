@@ -112,6 +112,10 @@ except ImportError:
 # Configuration
 # =============================================================================
 
+from core.live_authorization import (
+    LiveAuthorizationGate,
+    LiveAuthorizationRequest,
+)
 from core.reconciliation import (
     BrokerSnapshot,
     LocalSnapshot,
@@ -322,6 +326,7 @@ class TradingOrchestrator:
         )
         self.last_startup_report = None
         self.last_reconciliation_report = None
+        self.last_authorization_decision = None
         # ATOS-P0-AUTH-001 will source this from validated config. Until
         # then it is unset, and an unset fingerprint is itself a mismatch.
         self.expected_account_fingerprint = getattr(
@@ -574,11 +579,63 @@ class TradingOrchestrator:
         return True, f"mode={self.config.mode.value}"
 
     def _check_live_authorization(self):
-        # ATOS-P0-AUTH-001 supplies the real authorisation gate. Until then a
-        # live start is refused, because mode="live" is not authorisation.
-        return False, (
-            "explicit live authorization is not implemented yet "
-            "(ATOS-P0-AUTH-001); mode=live alone is not authorization"
+        """Evaluate the fifteen live-activation conditions.
+
+        ATOS-P0-AUTH-001. The request is assembled from what the orchestrator
+        can actually establish. Anything it cannot establish stays at its
+        default, which is "not satisfied" - so a missing capability refuses
+        rather than waves through.
+        """
+        request = self._build_authorization_request()
+        decision = LiveAuthorizationGate().authorize(request)
+        self.last_authorization_decision = decision
+        if decision.authorized:
+            return True, "all fifteen live activation conditions are satisfied"
+        first = decision.first_failure
+        return False, f"{decision.summary()} - {decision.failures.get(first, '')}"
+
+    def _build_authorization_request(self) -> LiveAuthorizationRequest:
+        """Collect the evidence the orchestrator has for a live activation."""
+        journal = getattr(self, "intent_journal", None)
+        unresolved = (
+            [i.client_order_id for i in journal.unresolved_intents()]
+            if journal is not None else []
+        )
+        reconciliation = getattr(self, "last_reconciliation_report", None)
+        broker_fingerprint = None
+        if reconciliation is not None and reconciliation.may_acquire:
+            broker_fingerprint = self.expected_account_fingerprint
+
+        return LiveAuthorizationRequest(
+            explicit_live_flag=bool(getattr(self.config, "explicit_live_flag", False)),
+            human_risk_acknowledgement=getattr(
+                self.config, "live_risk_acknowledgement", None
+            ),
+            environment_designation=getattr(
+                self.config, "environment_designation", None
+            ),
+            credential_present=bool(self.credentials is not None),
+            credential_expires_at=getattr(self.config, "credential_expires_at", None),
+            credential_source=getattr(self.config, "credential_source", None),
+            database_healthy=self.database is not None,
+            state_replay_succeeded=bool(
+                getattr(self, "state_replay_succeeded", False)
+            ),
+            reconciliation_matched=bool(
+                reconciliation is not None and reconciliation.may_acquire
+            ),
+            market_data_healthy=self.live_data is not None,
+            config_hash=getattr(self.config, "config_hash", None),
+            promoted_config_hashes=frozenset(
+                getattr(self.config, "promoted_config_hashes", ()) or ()
+            ),
+            capital_tier_limit=getattr(self.config, "capital_tier_limit", None),
+            active_risk_trips=list(getattr(self, "active_risk_trips", []) or []),
+            unresolved_order_ids=unresolved,
+            expected_account_fingerprint=self.expected_account_fingerprint,
+            broker_account_fingerprint=broker_fingerprint,
+            session_id=getattr(self, "session_id", None),
+            session_id_persisted=bool(getattr(self, "session_id_persisted", False)),
         )
 
     def _check_durable_storage(self):

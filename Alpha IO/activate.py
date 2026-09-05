@@ -581,6 +581,15 @@ Examples:
 
     parser.add_argument("--mode", choices=["paper", "live", "backtest"],
                        help="Trading mode")
+    # ATOS-P0-AUTH-001: --mode live is a preference. These are the
+    # instruction. Both are required, and the acknowledgement must match
+    # exactly, so no script produces them by accident.
+    parser.add_argument("--i-am-authorizing-real-money", action="store_true",
+                       dest="explicit_live_flag",
+                       help="Explicit live-trading flag. Required with --mode live.")
+    parser.add_argument("--risk-acknowledgement", default=None,
+                       help="Must be exactly: "
+                            "'I UNDERSTAND THIS TRADES REAL MONEY'")
     parser.add_argument("--symbols", nargs="+", default=["BTC/USDT", "ETH/USDT"],
                        help="Trading symbols")
     parser.add_argument("--capital", type=float, default=100000.0,
@@ -617,6 +626,26 @@ Examples:
             print("  Set BINANCE_API_KEY and BINANCE_API_SECRET environment variables")
         return
 
+    # ATOS-P0-AUTH-001: refuse a live start that carries only a mode string,
+    # before anything is constructed or any credential is touched.
+    if args.mode == "live":
+        from core.live_authorization import LiveAuthorizationRequest
+
+        required = LiveAuthorizationRequest().required_acknowledgement
+        if not args.explicit_live_flag:
+            print("\n  ✗ Refusing --mode live without --i-am-authorizing-real-money.")
+            print("    A mode string is a preference, not an instruction to")
+            print("    risk money (ATOS-P0-AUTH-001).")
+            return 2
+        if (args.risk_acknowledgement or "").strip() != required:
+            print("\n  ✗ Refusing --mode live: the risk acknowledgement is missing")
+            print("    or does not match exactly. Required:")
+            print(f"      --risk-acknowledgement '{required}'")
+            return 2
+        print("\n  Live flags accepted. The system will still refuse to")
+        print("  activate unless every startup and authorization condition")
+        print("  is satisfied.")
+
     # Run with mode
     if args.mode:
         print(BANNER)
@@ -630,4 +659,6 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    # Propagate the exit code: a refused live activation must be detectable
+    # by a script or a CI job, not just visible on a terminal.
+    sys.exit(main() or 0)
