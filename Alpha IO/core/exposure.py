@@ -36,6 +36,10 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+#: Quantity comparison epsilon for the reduce-only proof. Replaced by a
+#: venue-grid Decimal comparison in ATOS-P1-NUM-001.
+_EPSILON = 1e-9
+
 
 @dataclass
 class ExposureBreach:
@@ -322,3 +326,168 @@ def view_from_reconciliation(
         complete=complete and not missing_prices,
         reconciled=reconciled,
     )
+
+
+# ---------------------------------------------------------------------------
+# ATOS-P1-RISK-003: proving an order actually reduces risk
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ReduceOnlyDecision:
+    """Whether an order qualifies for risk-reducing privilege, and why."""
+
+    allowed: bool
+    reason: str
+    pre_trade_exposure: float = 0.0
+    post_trade_exposure: float = 0.0
+    max_reducible_quantity: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "pre_trade_exposure": self.pre_trade_exposure,
+            "post_trade_exposure": self.post_trade_exposure,
+            "max_reducible_quantity": self.max_reducible_quantity,
+        }
+
+
+class ReduceOnlyGate:
+    """Decides whether a SELL or CLOSE genuinely reduces absolute exposure.
+
+    "It is a sell, so it reduces risk" is false in three common cases, and
+    each one is a way to acquire exposure through a path that skips the
+    acquisition checks:
+
+    * selling more than is held opens a short;
+    * selling while an earlier close is still working sells the same position
+      twice, and the second one opens a short;
+    * selling against a stale position reading sizes against a quantity that
+      may no longer exist.
+
+    So the privilege is granted only on proof:
+
+        abs(post_trade_exposure) <= abs(pre_trade_exposure)
+    """
+
+    def __init__(
+        self,
+        view: ExposureView,
+        allow_shorting: bool = False,
+        live: bool = False,
+    ) -> None:
+        self.view = view
+        self.allow_shorting = allow_shorting
+        self.live = live
+
+    def evaluate(
+        self,
+        asset: str,
+        side: str,
+        quantity: float,
+        held_quantity: float,
+        outstanding_close_quantity: float = 0.0,
+        broker_reduce_only: bool = False,
+    ) -> ReduceOnlyDecision:
+        """Evaluate a proposed reducing order.
+
+        ``held_quantity`` is signed: positive long, negative short. It must
+        come from broker truth, not local belief.
+        """
+        if quantity <= 0:
+            return ReduceOnlyDecision(
+                False, "a non-positive quantity cannot reduce anything"
+            )
+
+        # Stale or unproven position state cannot grant the privilege. Sizing
+        # a close against a number nobody checked is how an accidental short
+        # gets opened.
+        if self.live and not self.view.complete:
+            return ReduceOnlyDecision(
+                False,
+                "position state is incomplete; a close cannot be proved "
+                "risk-reducing against data we failed to fetch",
+            )
+        if self.live and not self.view.reconciled:
+            return ReduceOnlyDecision(
+                False,
+                "position state is not reconciled; a stale reading cannot "
+                "grant risk-reducing privilege",
+            )
+
+        normalized = side.strip().lower()
+        if normalized not in {"buy", "sell"}:
+            return ReduceOnlyDecision(False, f"unrecognised side {side!r}")
+
+        pre = abs(held_quantity)
+
+        # Quantity still owned after accounting for closes already working.
+        # Ignoring these sells the same position twice.
+        available = max(0.0, pre - abs(outstanding_close_quantity))
+
+        signed_delta = quantity if normalized == "buy" else -quantity
+        post = abs(held_quantity + signed_delta)
+
+        decision = ReduceOnlyDecision(
+            allowed=False,
+            reason="",
+            pre_trade_exposure=pre,
+            post_trade_exposure=post,
+            max_reducible_quantity=available,
+        )
+
+        # A close against a flat book is an opening trade wearing a disguise.
+        if pre == 0.0:
+            decision.reason = (
+                f"nothing is held in {asset}; this order would open a position, "
+                "not reduce one"
+            )
+            return decision
+
+        # Selling a long, or buying back a short, is the reducing direction.
+        reducing_direction = (
+            (held_quantity > 0 and normalized == "sell")
+            or (held_quantity < 0 and normalized == "buy")
+        )
+        if not reducing_direction:
+            decision.reason = (
+                f"a {normalized} against a "
+                f"{'long' if held_quantity > 0 else 'short'} position increases "
+                "absolute exposure"
+            )
+            return decision
+
+        if quantity > available + _EPSILON:
+            detail = (
+                f"{quantity:g} exceeds the {available:g} still closeable"
+            )
+            if outstanding_close_quantity:
+                detail += (
+                    f" ({abs(outstanding_close_quantity):g} already working)"
+                )
+            if not self.allow_shorting:
+                decision.reason = (
+                    f"{detail}; the remainder would open a short and shorting "
+                    "is not enabled"
+                )
+                return decision
+            decision.reason = (
+                f"{detail}; shorting is enabled but a short is an acquisition "
+                "and must go through the acquisition checks, not this gate"
+            )
+            return decision
+
+        # The arithmetic proof the ULTRAPLAN asks for.
+        if post > pre + _EPSILON:
+            decision.reason = (
+                f"post-trade exposure {post:g} exceeds pre-trade {pre:g}"
+            )
+            return decision
+
+        decision.allowed = True
+        decision.reason = (
+            f"reduces {asset} exposure from {pre:g} to {post:g}"
+            + (" (broker reduce-only flag set)" if broker_reduce_only else "")
+        )
+        return decision
+
