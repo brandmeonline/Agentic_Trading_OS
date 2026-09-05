@@ -1090,6 +1090,22 @@ class ExecutionEngine:
         if broker_id:
             order.broker_order_id = str(broker_id)
 
+        if not data and response is not None and response != {}:
+            # The broker said something we could not parse. That is not an
+            # acknowledgement.
+            order.mark_ambiguous(
+                f"unreadable broker response of type {type(response).__name__}"
+            )
+            self._mark_ledger_status(order)
+            return ExecutionResult(
+                success=False,
+                order=order,
+                message=(
+                    "Broker response could not be parsed. Order state UNKNOWN; "
+                    "reconcile by client order ID before any retry."
+                ),
+            )
+
         reported_status = self._coerce_order_status(
             data.get("status", OrderStatus.SUBMITTED.value)
         )
@@ -1259,12 +1275,29 @@ class ExecutionEngine:
             return asdict(payload)
         to_dict = getattr(payload, "to_dict", None)
         if callable(to_dict):
-            return dict(to_dict())
-        return {
-            key: value
-            for key, value in vars(payload).items()
-            if not key.startswith("_")
-        }
+            try:
+                return dict(to_dict())
+            except Exception:
+                logger.warning("Broker payload to_dict() failed; treating as unreadable")
+                return {}
+        try:
+            return {
+                key: value
+                for key, value in vars(payload).items()
+                if not key.startswith("_")
+            }
+        except TypeError:
+            # A string, a number, or anything else without __dict__. A broker
+            # that answers with malformed JSON must not crash the response
+            # handler - an unreadable answer is an unknown state, and the
+            # caller needs a result it can act on rather than an exception
+            # escaping mid-transition.
+            logger.warning(
+                "Broker returned an unreadable payload of type %s; treating "
+                "the order state as UNKNOWN",
+                type(payload).__name__,
+            )
+            return {}
 
     def _coerce_order_status(self, raw_status: Any) -> OrderStatus:
         """Map broker status spellings onto execution order statuses."""

@@ -63,6 +63,7 @@ jobs:
       - name: Run explicit regression suite
         run: |
           python -m pytest -q \
+            "Alpha IO/tests/test_adversarial_broker_harness.py" \
             "Alpha IO/tests/test_advanced_modules.py" \
             "Alpha IO/tests/test_agent.py" \
             "Alpha IO/tests/test_agent_authority_boundary.py" \
