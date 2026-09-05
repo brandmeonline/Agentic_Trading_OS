@@ -558,14 +558,25 @@ def test_q16_an_alert_payload_is_redacted_on_the_way_out():
     manager = AlertManager(
         channels=[CallbackAlertChannel("test", seen.append)]
     )
+    # Deliberately not a vendor-shaped literal. The exhaustive per-shape
+    # coverage lives in test_alerting_escalation.py, which is exempt from the
+    # secret scan precisely so it can carry realistic tokens; this file is not
+    # exempt and should stay that way, because it is a forty-test file that
+    # will be edited. What is checked here is the composed property: the two
+    # redaction layers - a secret-looking key name, and a secret-looking value
+    # inside otherwise innocent text - both fire on the way to a channel.
     manager.raise_alert(
         AlertKind.BROKER_AUTH_FAILURE, "auth failed",
-        api_key="PKREALLOOKINGKEY123456", detail="bearer abcdefghijklmnopqrst",
+        api_key="the-key-itself-whatever-shape-it-is",
+        detail="rejected with bearer abcdefghijklmnopqrstuvwx",
     )
 
     rendered = repr(seen)
-    assert "PKREALLOOKINGKEY123456" not in rendered
-    assert "abcdefghijklmnopqrst" not in rendered
+    assert "the-key-itself-whatever-shape-it-is" not in rendered
+    assert "abcdefghijklmnopqrstuvwx" not in rendered
+    # The surrounding message survives, so this is redaction rather than
+    # deletion - an alert nobody can read is a different failure.
+    assert "auth failed" in rendered
 
 
 def test_q16_the_credential_paths_are_ignored_by_git_and_docker():
