@@ -71,6 +71,7 @@ jobs:
             "Alpha IO/tests/test_broker_reconciliation.py" \
             "Alpha IO/tests/test_cancel_fill_race.py" \
             "Alpha IO/tests/test_corpus_alerts.py" \
+            "Alpha IO/tests/test_crash_replay.py" \
             "Alpha IO/tests/test_credentials_security.py" \
             "Alpha IO/tests/test_daily_drawdown_recovery.py" \
             "Alpha IO/tests/test_decimal_money.py" \

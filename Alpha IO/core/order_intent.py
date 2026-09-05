@@ -112,9 +112,18 @@ class OrderIntentJournal:
     its own.
     """
 
-    def __init__(self, path: str, session_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        path: str,
+        session_id: Optional[str] = None,
+        busy_timeout_seconds: float = 30.0,
+    ) -> None:
         self.path = Path(path)
         self.session_id = session_id or f"session-{uuid.uuid4()}"
+        # How long to wait for a competing writer before giving up. The
+        # default is generous because a live order intent is worth waiting
+        # for; tests that deliberately hold a lock pass something short.
+        self.busy_timeout_seconds = busy_timeout_seconds
         self._lock = threading.Lock()
         self._ensure_schema()
 
@@ -122,7 +131,7 @@ class OrderIntentJournal:
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self.path), timeout=30.0)
+        conn = sqlite3.connect(str(self.path), timeout=self.busy_timeout_seconds)
         conn.row_factory = sqlite3.Row
         # FULL, not NORMAL: a returned commit must have reached stable
         # storage. This is the whole point of the journal.
