@@ -1551,26 +1551,121 @@ class ExecutionEngine:
         }
 
     def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order."""
+        """Request cancellation. This does not cancel the order.
+
+        ATOS-P0-EXEC-004: ``cancel requested`` is not ``canceled``. Between
+        the request and the broker's answer the order is still live and can
+        still fill - that is the cancel/fill race, and it is won by whoever
+        the exchange serves first, not by us. So a request moves the order to
+        CANCEL_REQUESTED and keeps its reservation; only
+        :meth:`confirm_cancellation` may retire it, and only on broker
+        evidence.
+
+        Returns True when the request was accepted for processing, not when
+        the order is gone. In simulation there is no race, so a local order
+        cancels immediately.
+        """
         order = self.orders.get(order_id)
-        if order and order.is_active:
-            if not self.config.simulation_mode and self.broker_adapter:
-                cancel = getattr(self.broker_adapter, "cancel_order", None)
-                if not callable(cancel):
-                    return False
-                try:
-                    if not cancel(order_id):
-                        return False
-                except Exception:
-                    logger.exception("Live execution adapter failed while cancelling order %s", order_id)
-                    return False
-            # ATOS-P0-EXEC-004 will split this into CANCEL_REQUESTED and a
-            # broker-confirmed terminal state. Routed through the validated
-            # transition here so the lifecycle rules already apply.
-            order.transition_to(OrderStatus.CANCELLED, "cancel acknowledged by adapter")
+        if order is None or not order.is_active:
+            return False
+
+        if order.is_ambiguous:
+            # We do not know what the broker holds, so we cannot reason about
+            # what a cancel would do to it.
+            logger.warning(
+                "Cancel requested for order %s while its state is %s; resolve it "
+                "against the broker first.", order.id, order.status.name,
+            )
+            return False
+
+        # Simulation has no broker and therefore no race.
+        if self.config.simulation_mode or not self.broker_adapter:
+            if order.can_transition_to(OrderStatus.CANCELLED):
+                order.transition_to(OrderStatus.CANCELLED, "cancelled locally (simulation)")
+                self._mark_ledger_status(order)
+                return True
+            return False
+
+        cancel = getattr(self.broker_adapter, "cancel_order", None)
+        if not callable(cancel):
+            return False
+
+        # Record the request before making it, so a crash mid-request cannot
+        # lose the fact that a cancel is outstanding.
+        if order.can_transition_to(OrderStatus.CANCEL_REQUESTED):
+            order.transition_to(OrderStatus.CANCEL_REQUESTED, "cancel requested")
             self._mark_ledger_status(order)
-            return True
-        return False
+
+        try:
+            accepted = cancel(order_id)
+        except Exception as exc:
+            # The broker may or may not have received the request, and the
+            # order may or may not still be live. Both are unknown.
+            logger.exception(
+                "Cancel request for order %s failed in transport; the order may "
+                "still be live at the broker", order.id,
+            )
+            order.mark_ambiguous(
+                f"cancel request raised {type(exc).__name__}; broker state unproven"
+            )
+            self._mark_ledger_status(order)
+            return False
+
+        if not accepted:
+            # The broker refused the cancel. A refusal usually means the order
+            # already reached a terminal state, which we do not know yet.
+            logger.warning(
+                "Broker refused the cancel request for order %s; its state is "
+                "now unproven", order.id,
+            )
+            order.mark_ambiguous("broker refused the cancel request")
+            self._mark_ledger_status(order)
+            return False
+
+        # Accepted for processing. Still not cancelled.
+        return True
+
+    def confirm_cancellation(self, order_id: str, broker_state: Any) -> ExecutionResult:
+        """Apply the broker's answer to a cancel request.
+
+        ATOS-P0-EXEC-004: this is the only path that may retire a
+        CANCEL_REQUESTED order, and it applies whatever the broker actually
+        says - including a fill that landed after we asked to cancel.
+        """
+        order = self.orders.get(order_id)
+        if order is None:
+            return ExecutionResult(
+                success=False,
+                order=Order(id=order_id),
+                message=f"No such order: {order_id}",
+            )
+        return self._apply_live_execution_response(order, broker_state)
+
+    def orders_pending_cancellation(self) -> List[Order]:
+        """Orders that asked to cancel and have not been answered."""
+        return [
+            order for order in self.orders.values()
+            if order.status is OrderStatus.CANCEL_REQUESTED
+        ]
+
+    def has_material_ambiguity(self) -> bool:
+        """Whether any order's broker state is unresolved.
+
+        ATOS-P0-EXEC-004 and INV-ATOS-002: while this is true the risk engine
+        must not permit new acquisition, because effective exposure cannot be
+        computed from state we do not have.
+        """
+        return any(
+            order.is_ambiguous or order.status is OrderStatus.CANCEL_REQUESTED
+            for order in self.orders.values()
+        )
+
+    def ambiguous_orders(self) -> List[Order]:
+        """Every order whose broker state is unresolved, for the risk engine."""
+        return [
+            order for order in self.orders.values()
+            if order.is_ambiguous or order.status is OrderStatus.CANCEL_REQUESTED
+        ]
 
     def get_order(self, order_id: str) -> Optional[Order]:
         """Get order by ID."""
