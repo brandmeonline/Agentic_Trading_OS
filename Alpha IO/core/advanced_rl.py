@@ -12,6 +12,14 @@ Production-grade RL algorithms for trading:
 from __future__ import annotations
 
 import numpy as np
+
+from core.model_governance import (
+    CatastrophicAction,
+    CatastrophicActionGuard,
+    ObservationSchema,
+    RewardCosts,
+    risk_adjusted_reward,
+)
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Union
 from enum import Enum
@@ -65,6 +73,13 @@ class RLConfig:
     # SAC specific
     alpha: float = 0.2  # Entropy temperature
     auto_alpha: bool = True
+    # ATOS-P3-ML-001. Every source of randomness in an agent draws from a
+    # generator seeded from here, not from the global numpy RNG. Without it a
+    # training run cannot be reproduced, which means its results cannot be
+    # checked and the model cannot be promoted. None is permitted - some runs
+    # genuinely are exploratory - but ModelArtifact.reproducible is False for
+    # an unseeded model, and the registry refuses to promote one.
+    seed: Optional[int] = None
 
 
 @dataclass
@@ -130,13 +145,19 @@ def log_softmax(x: np.ndarray) -> np.ndarray:
 class LinearLayer:
     """Linear layer with Xavier initialization."""
 
-    def __init__(self, in_features: int, out_features: int):
+    def __init__(self, in_features: int, out_features: int,
+                 rng: Optional[np.random.Generator] = None):
         self.in_features = in_features
         self.out_features = out_features
 
-        # Xavier initialization
+        # Xavier initialization. The generator is injected so a seeded agent
+        # gets the same starting weights every run; falling back to a fresh
+        # default_rng keeps ad-hoc use working, unseeded and unpromotable.
+        generator = rng if rng is not None else np.random.default_rng()
         limit = np.sqrt(6.0 / (in_features + out_features))
-        self.weights = np.random.uniform(-limit, limit, (in_features, out_features)).astype(np.float32)
+        self.weights = generator.uniform(
+            -limit, limit, (in_features, out_features)
+        ).astype(np.float32)
         self.bias = np.zeros(out_features, dtype=np.float32)
 
         # Gradients
@@ -168,12 +189,15 @@ class LinearLayer:
 class MLP:
     """Multi-layer perceptron."""
 
-    def __init__(self, layer_dims: List[int], activation: str = "relu"):
+    def __init__(self, layer_dims: List[int], activation: str = "relu",
+                 rng: Optional[np.random.Generator] = None):
         self.layers = []
         self.activation = activation
 
         for i in range(len(layer_dims) - 1):
-            self.layers.append(LinearLayer(layer_dims[i], layer_dims[i + 1]))
+            self.layers.append(
+                LinearLayer(layer_dims[i], layer_dims[i + 1], rng=rng)
+            )
 
         self._activations = []
 
@@ -247,10 +271,12 @@ class MLP:
 class ReplayBuffer:
     """Experience replay buffer for off-policy algorithms."""
 
-    def __init__(self, capacity: int, state_dim: int):
+    def __init__(self, capacity: int, state_dim: int,
+                 rng: Optional[np.random.Generator] = None):
         self.capacity = capacity
         self.state_dim = state_dim
         self.buffer = deque(maxlen=capacity)
+        self.rng = rng if rng is not None else np.random.default_rng()
 
     def push(self, experience: Experience):
         """Add experience to buffer."""
@@ -258,7 +284,7 @@ class ReplayBuffer:
 
     def sample(self, batch_size: int) -> Tuple[np.ndarray, ...]:
         """Sample random batch."""
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
+        indices = self.rng.choice(len(self.buffer), batch_size, replace=False)
         experiences = [self.buffer[i] for i in indices]
 
         states = np.array([e.state for e in experiences])
@@ -276,8 +302,9 @@ class ReplayBuffer:
 class PrioritizedReplayBuffer(ReplayBuffer):
     """Prioritized experience replay buffer."""
 
-    def __init__(self, capacity: int, state_dim: int, alpha: float = 0.6, beta: float = 0.4):
-        super().__init__(capacity, state_dim)
+    def __init__(self, capacity: int, state_dim: int, alpha: float = 0.6,
+                 beta: float = 0.4, rng: Optional[np.random.Generator] = None):
+        super().__init__(capacity, state_dim, rng=rng)
         self.alpha = alpha
         self.beta = beta
         self.priorities = deque(maxlen=capacity)
@@ -294,7 +321,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         probs = priorities ** self.alpha
         probs /= probs.sum()
 
-        indices = np.random.choice(len(self.buffer), batch_size, p=probs, replace=False)
+        indices = self.rng.choice(len(self.buffer), batch_size, p=probs, replace=False)
         experiences = [self.buffer[i] for i in indices]
 
         # Importance sampling weights
@@ -327,6 +354,10 @@ class RLAgent(ABC):
         self.config = config
         self.training_steps = 0
         self.episode_rewards = []
+        # One generator per agent, seeded from the config. Every draw below
+        # goes through it, so nothing an agent does depends on what else in
+        # the process happened to call np.random first.
+        self.rng = np.random.default_rng(config.seed)
 
     @abstractmethod
     def select_action(self, state: np.ndarray, explore: bool = True) -> Union[int, np.ndarray]:
@@ -361,11 +392,13 @@ class DQNAgent(RLAgent):
 
         # Networks
         layer_dims = [config.state_dim] + config.hidden_dims + [config.action_dim]
-        self.q_network = MLP(layer_dims, activation="relu")
+        self.q_network = MLP(layer_dims, activation="relu", rng=self.rng)
         self.target_network = self.q_network.copy()
 
         # Replay buffer
-        self.buffer = PrioritizedReplayBuffer(config.buffer_size, config.state_dim)
+        self.buffer = PrioritizedReplayBuffer(
+            config.buffer_size, config.state_dim, rng=self.rng
+        )
 
         # Exploration
         self.epsilon = 1.0
@@ -374,8 +407,8 @@ class DQNAgent(RLAgent):
 
     def select_action(self, state: np.ndarray, explore: bool = True) -> int:
         """Epsilon-greedy action selection."""
-        if explore and np.random.random() < self.epsilon:
-            return np.random.randint(self.config.action_dim)
+        if explore and self.rng.random() < self.epsilon:
+            return self.rng.integers(self.config.action_dim)
 
         state = state.reshape(1, -1)
         q_values = self.q_network.forward(state)
@@ -469,11 +502,11 @@ class PPOAgent(RLAgent):
 
         # Actor network (policy)
         actor_dims = [config.state_dim] + config.hidden_dims + [config.action_dim]
-        self.actor = MLP(actor_dims, activation="relu")
+        self.actor = MLP(actor_dims, activation="relu", rng=self.rng)
 
         # Critic network (value function)
         critic_dims = [config.state_dim] + config.hidden_dims + [1]
-        self.critic = MLP(critic_dims, activation="relu")
+        self.critic = MLP(critic_dims, activation="relu", rng=self.rng)
 
         # Trajectory buffer
         self.trajectory = []
@@ -487,7 +520,7 @@ class PPOAgent(RLAgent):
         probs = softmax(logits)
 
         if explore:
-            action = np.random.choice(self.config.action_dim, p=probs[0])
+            action = self.rng.choice(self.config.action_dim, p=probs[0])
         else:
             action = np.argmax(probs[0])
 
@@ -528,7 +561,7 @@ class PPOAgent(RLAgent):
 
         for _ in range(self.config.ppo_epochs):
             # Shuffle indices
-            indices = np.random.permutation(n_samples)
+            indices = self.rng.permutation(n_samples)
 
             for start in range(0, n_samples, self.config.batch_size):
                 end = start + self.config.batch_size
@@ -595,15 +628,15 @@ class PPOAgent(RLAgent):
         states, actions, rewards, next_states = [], [], [], []
         dones, log_probs, values = [], [], []
 
-        state = env.reset() if hasattr(env, 'reset') else np.random.randn(self.config.state_dim)
+        state = env.reset() if hasattr(env, 'reset') else self.rng.standard_normal(self.config.state_dim)
 
         for _ in range(steps):
             action, log_prob, value = self.select_action(state)
 
             # Simulate environment step
-            next_state = state + np.random.randn(self.config.state_dim) * 0.1
-            reward = np.random.randn() * 0.1
-            done = np.random.random() < 0.01
+            next_state = state + self.rng.standard_normal(self.config.state_dim) * 0.1
+            reward = self.rng.standard_normal() * 0.1
+            done = self.rng.random() < 0.01
 
             states.append(state)
             actions.append(action)
@@ -613,7 +646,7 @@ class PPOAgent(RLAgent):
             log_probs.append(log_prob)
             values.append(value)
 
-            state = next_state if not done else np.random.randn(self.config.state_dim)
+            state = next_state if not done else self.rng.standard_normal(self.config.state_dim)
 
         # Compute advantages
         states = np.array(states)
@@ -673,7 +706,7 @@ class A2CAgent(RLAgent):
 
         # Shared feature network
         feature_dims = [config.state_dim] + config.hidden_dims[:-1]
-        self.features = MLP(feature_dims, activation="relu")
+        self.features = MLP(feature_dims, activation="relu", rng=self.rng)
 
         # Actor head
         self.actor_head = LinearLayer(config.hidden_dims[-2], config.action_dim)
@@ -700,7 +733,7 @@ class A2CAgent(RLAgent):
         value = self.critic_head.forward(features)[0, 0]
 
         if explore:
-            action = np.random.choice(self.config.action_dim, p=probs[0])
+            action = self.rng.choice(self.config.action_dim, p=probs[0])
         else:
             action = np.argmax(probs[0])
 
@@ -821,12 +854,12 @@ class SACAgent(RLAgent):
 
         # Actor network (outputs mean and log_std)
         actor_dims = [config.state_dim] + config.hidden_dims + [config.action_dim * 2]
-        self.actor = MLP(actor_dims, activation="relu")
+        self.actor = MLP(actor_dims, activation="relu", rng=self.rng)
 
         # Twin Q-networks
         q_dims = [config.state_dim + config.action_dim] + config.hidden_dims + [1]
-        self.q1 = MLP(q_dims, activation="relu")
-        self.q2 = MLP(q_dims, activation="relu")
+        self.q1 = MLP(q_dims, activation="relu", rng=self.rng)
+        self.q2 = MLP(q_dims, activation="relu", rng=self.rng)
         self.q1_target = self.q1.copy()
         self.q2_target = self.q2.copy()
 
@@ -835,7 +868,9 @@ class SACAgent(RLAgent):
         self.target_entropy = -config.action_dim
 
         # Replay buffer
-        self.buffer = ReplayBuffer(config.buffer_size, config.state_dim)
+        self.buffer = ReplayBuffer(
+            config.buffer_size, config.state_dim, rng=self.rng
+        )
 
     def select_action(self, state: np.ndarray, explore: bool = True) -> np.ndarray:
         """Sample action from policy."""
@@ -849,7 +884,7 @@ class SACAgent(RLAgent):
 
         if explore:
             # Sample from normal distribution
-            noise = np.random.randn(self.config.action_dim)
+            noise = self.rng.standard_normal(self.config.action_dim)
             action = mean + std * noise
         else:
             action = mean
@@ -880,7 +915,7 @@ class SACAgent(RLAgent):
         next_means = next_outputs[:, :self.config.action_dim]
         next_log_stds = np.clip(next_outputs[:, self.config.action_dim:], -20, 2)
         next_stds = np.exp(next_log_stds)
-        next_noise = np.random.randn(*next_means.shape)
+        next_noise = self.rng.standard_normal(*next_means.shape)
         next_actions = np.tanh(next_means + next_stds * next_noise)
 
         # Log probabilities
@@ -912,7 +947,7 @@ class SACAgent(RLAgent):
         means = outputs[:, :self.config.action_dim]
         log_stds = np.clip(outputs[:, self.config.action_dim:], -20, 2)
         stds = np.exp(log_stds)
-        noise = np.random.randn(*means.shape)
+        noise = self.rng.standard_normal(*means.shape)
         actions_new = np.tanh(means + stds * noise)
         log_probs = self._compute_log_prob(means, log_stds, actions_new)
 
@@ -1001,13 +1036,31 @@ class TradingEnvironment:
         features: np.ndarray,
         initial_balance: float = 10000.0,
         commission: float = 0.001,
-        max_position: float = 1.0
+        max_position: float = 1.0,
+        costs: Optional[RewardCosts] = None,
+        schema: Optional[ObservationSchema] = None,
+        guard: Optional[CatastrophicActionGuard] = None,
     ):
         self.prices = prices
         self.features = features
         self.initial_balance = initial_balance
         self.commission = commission
         self.max_position = max_position
+
+        # ATOS-P3-ML-001. The reward charges what a trade costs and penalises
+        # what a position risks. A reward of pure PnL teaches a policy that a
+        # 40% drawdown on the way to a 41% return is a good trade, and that
+        # turning the book over every bar is free.
+        self.costs = costs or RewardCosts(commission_pct=commission)
+        #: What the observation vector means. Without it, a model trained on
+        #: one feature set will happily accept a different set of the same
+        #: width and produce confident nonsense.
+        self.schema = schema
+        #: Refuses actions outside the limits, whatever the policy asked for.
+        self.guard = guard
+        self.refused_actions = 0
+        self.peak_equity = initial_balance
+        self.reward_history: List[float] = []
 
         self.state_dim = features.shape[1] + 3  # features + position + balance + unrealized_pnl
         self.action_dim = 3  # buy, sell, hold
@@ -1022,6 +1075,11 @@ class TradingEnvironment:
         self.entry_price = 0.0
         self.total_reward = 0.0
         self.trades = []
+        self.refused_actions = 0
+        self.peak_equity = self.initial_balance
+        self.reward_history = []
+        if self.guard is not None:
+            self.guard.reset_session()
 
         return self._get_state()
 
@@ -1043,7 +1101,25 @@ class TradingEnvironment:
         """Take action in environment."""
         price = self.prices[self.step_idx]
         reward = 0.0
-        info = {}
+        info: Dict[str, Any] = {}
+        traded_notional = 0.0
+
+        # ATOS-P3-ML-001. The guard runs before the action does, and it is not
+        # part of the network's objective: a policy that finds a penalty worth
+        # paying will pay it, and a refusal is not a penalty.
+        if self.guard is not None and action in (0, 1):
+            intended = (self.balance * self.max_position) / price if price else 0.0
+            try:
+                self.guard.permit(
+                    action=action,
+                    intended_position=intended / max(intended, 1e-12),
+                    notional=intended * price,
+                    equity=self.balance,
+                )
+            except CatastrophicAction as refusal:
+                self.refused_actions += 1
+                info["refused"] = str(refusal)
+                action = 2  # forced hold
 
         # Execute action
         if action == 0:  # Buy
@@ -1061,6 +1137,7 @@ class TradingEnvironment:
                 self.position = size
                 self.entry_price = price
                 self.balance -= commission
+                traded_notional += size * price
                 info["trade"] = "buy"
 
         elif action == 1:  # Sell
@@ -1078,6 +1155,7 @@ class TradingEnvironment:
                 self.position = -size
                 self.entry_price = price
                 self.balance -= commission
+                traded_notional += size * price
                 info["trade"] = "sell"
 
         # Hold: action == 2, do nothing
@@ -1086,16 +1164,47 @@ class TradingEnvironment:
         self.step_idx += 1
         done = self.step_idx >= len(self.prices) - 1
 
-        # Calculate unrealized PnL change as reward component
+        # Mark to market. This used to be
+        #   position * price_change * initial_balance * 0.01
+        # which is dimensionally wrong - position is in units, price_change a
+        # fraction and initial_balance money - so the unrealised term was
+        # scaled by an arbitrary initial_balance/price factor. The change in
+        # the position's value is position * price * price_change.
         if not done and self.position != 0:
             next_price = self.prices[self.step_idx]
             price_change = (next_price - price) / price
-            unrealized_change = self.position * price_change * self.initial_balance
-            reward += unrealized_change * 0.01  # Scale factor
+            reward += self.position * price * price_change
 
+        # Equity is balance plus *unrealised* PnL, not balance plus the
+        # position's notional. This environment never debits the notional on
+        # entry - only the commission - so it models a margined position;
+        # adding position * price would count the same money twice and make
+        # every buy look like it doubled the account.
+        mark = self.prices[min(self.step_idx, len(self.prices) - 1)]
+        unrealised = (
+            self.position * (mark - self.entry_price) if self.position else 0.0
+        )
+        equity = self.balance + unrealised
+        self.peak_equity = max(self.peak_equity, equity)
+        drawdown = max(0.0, self.peak_equity - equity)
+        recent = self.reward_history[-20:]
+        volatility = float(np.std(recent)) if len(recent) > 1 else 0.0
+
+        # Charge for the trade and for the risk carried.
+        reward = risk_adjusted_reward(
+            pnl=reward,
+            traded_notional=traded_notional,
+            drawdown=drawdown,
+            recent_volatility=volatility,
+            costs=self.costs,
+        )
+
+        self.reward_history.append(reward)
         self.total_reward += reward
         info["balance"] = self.balance
         info["position"] = self.position
+        info["equity"] = equity
+        info["drawdown"] = drawdown
 
         return self._get_state(), reward, done, info
 

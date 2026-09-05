@@ -57,6 +57,7 @@ FLOORS: Dict[str, Tuple[int, str]] = {
     # Backtest honesty.
     "core/leakage.py": (90, ""),
     "core/fill_model.py": (90, ""),
+    "core/model_governance.py": (90, ""),
 
     # Operator-facing truth.
     "core/operator_status.py": (95, ""),

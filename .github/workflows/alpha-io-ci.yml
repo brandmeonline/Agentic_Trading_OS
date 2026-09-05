@@ -94,6 +94,7 @@ jobs:
             core/net_guard.py \
             core/leakage.py \
             core/fill_model.py \
+            core/model_governance.py \
             core/alerting.py
 
       # Production code at medium severity and above. Every finding is either
