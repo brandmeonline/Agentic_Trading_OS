@@ -73,6 +73,7 @@ jobs:
             "Alpha IO/tests/test_headroom_compress.py" \
             "Alpha IO/tests/test_ledger_execution.py" \
             "Alpha IO/tests/test_live_activation_fail_closed.py" \
+            "Alpha IO/tests/test_live_persistence_failure.py" \
             "Alpha IO/tests/test_live_recovery.py" \
             "Alpha IO/tests/test_llm_client.py" \
             "Alpha IO/tests/test_market_view.py" \

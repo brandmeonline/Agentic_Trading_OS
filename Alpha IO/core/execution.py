@@ -17,6 +17,10 @@ import time
 from collections import deque
 
 from core.ledger import TradingLedger
+from core.persistence_policy import (
+    PersistencePolicy,
+    WriteKind,
+)
 from core.order_intent import (
     IntentPersistenceError,
     OrderIntent,
@@ -545,6 +549,7 @@ class ExecutionEngine:
         broker_adapter: Optional[Any] = None,
         intent_journal: Optional[OrderIntentJournal] = None,
         session_id: Optional[str] = None,
+        persistence_policy: Optional[PersistencePolicy] = None,
     ):
         self.config = config or ExecutionConfig()
         self.ledger = ledger
@@ -555,6 +560,13 @@ class ExecutionEngine:
         self.intent_journal = intent_journal
         self.session_id = session_id or (
             intent_journal.session_id if intent_journal else f"session-{uuid.uuid4()}"
+        )
+        # ATOS-P1-PERSIST-001: classifies write failures. Without one, a live
+        # engine defaults to a policy that still records and still raises;
+        # only the freeze hook is missing, and that absence is visible in the
+        # report rather than silent.
+        self.persistence_policy = persistence_policy or PersistencePolicy(
+            live=not self.config.simulation_mode
         )
 
         # Order management
@@ -740,6 +752,9 @@ class ExecutionEngine:
                     order.id, exc,
                 )
                 self.intent_persistence_failures += 1
+                self.persistence_policy.record_failure(
+                    WriteKind.ORDER_INTENT, str(exc)
+                )
                 order.transition_to(
                     OrderStatus.REJECTED, f"intent persistence failed: {exc}"
                 )
@@ -833,6 +848,14 @@ class ExecutionEngine:
                 "Order %s reached %s but the journal write failed (%s). Local "
                 "state and durable state now disagree; reconcile before adding risk.",
                 order.id, order.status.name, exc,
+            )
+            # ATOS-P1-PERSIST-001: a lost lifecycle transition is a critical
+            # write failure. In live mode this freezes new risk. The order is
+            # already at the broker, so we do not re-raise and lose the
+            # in-memory state as well - but the loss is no longer silent.
+            self.persistence_policy.record_failure(
+                WriteKind.LIFECYCLE_TRANSITION,
+                f"order {order.id} reached {order.status.name}: {exc}",
             )
 
     def resolve_ambiguous_order(self, order: Order) -> ExecutionResult:
@@ -962,6 +985,10 @@ class ExecutionEngine:
         except IntentPersistenceError as exc:
             self.intent_persistence_failures += 1
             logger.error("Could not journal a resolution attempt: %s", exc)
+            self.persistence_policy.record_failure(
+                WriteKind.LIFECYCLE_TRANSITION,
+                f"resolution attempt for {order.client_order_id}: {exc}",
+            )
 
     def _execute_immediate(self, order: Order) -> ExecutionResult:
         """Execute order immediately at market."""
