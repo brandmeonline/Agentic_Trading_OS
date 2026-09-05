@@ -54,6 +54,10 @@ FLOORS: Dict[str, Tuple[int, str]] = {
                                 "and the debt is the point of recording it"),
     "core/net_guard.py": (95, ""),
 
+    # Backtest honesty.
+    "core/leakage.py": (90, ""),
+    "core/fill_model.py": (90, ""),
+
     # Operator-facing truth.
     "core/operator_status.py": (95, ""),
     "core/alerting.py": (90, ""),

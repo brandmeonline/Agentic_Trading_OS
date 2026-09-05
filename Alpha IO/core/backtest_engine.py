@@ -17,6 +17,8 @@ from core.market_data import MarketDataFeed, SimulatedDataFeed, OHLCV
 from core.strategy import Strategy, StrategyOutput, StrategySignal, MarketData, StrategyEnsemble
 
 
+from core.fill_model import Bar, FillCosts, FillModel, FillTiming
+
 @dataclass
 class BacktestConfig:
     """Configuration for backtesting."""
@@ -27,6 +29,21 @@ class BacktestConfig:
     max_positions: int = 5
     warmup_bars: int = 50  # Bars before trading starts
     risk_free_rate: float = 0.05  # Annual
+
+    # ATOS-P3-BT-001. A signal derived from bar t fills on bar t+1, not at
+    # the close of bar t. The old behaviour filled at the same close the
+    # signal was computed from, which is a price nobody could have traded.
+    fill_timing: FillTiming = FillTiming.NEXT_BAR_OPEN
+    #: Half the bid/ask, paid on every fill. A strategy whose edge is smaller
+    #: than the round trip is a losing strategy that used to backtest flat.
+    half_spread_pct: float = 0.0005
+    #: The most of a bar's volume this backtest will assume it could take.
+    max_participation: float = 0.10
+    #: Linear impact at full participation, on top of the spread.
+    impact_pct: float = 0.002
+    #: Refuse to trade a bar that reports no volume, rather than assuming the
+    #: bar had infinite liquidity. Missing data is not permission.
+    require_volume: bool = True
 
 
 @dataclass
@@ -189,6 +206,24 @@ class BacktestEngine:
         # Data buffers
         self.data_buffer: Dict[str, List[MarketData]] = defaultdict(list)
 
+        # ATOS-P3-BT-001: a decision taken on bar t waits here until bar t+1.
+        # Holding it in a queue rather than executing inline is what makes the
+        # one-bar delay structural instead of a convention someone can forget.
+        self.pending: Dict[str, StrategyOutput] = {}
+        self.entry_bar: Dict[str, int] = {}
+        self.rejected_for_liquidity = 0
+
+        self.fill_model = FillModel(
+            costs=FillCosts(
+                half_spread_pct=self.config.half_spread_pct,
+                commission_pct=self.config.commission_pct,
+                slippage_pct=self.config.slippage_pct,
+                max_participation=self.config.max_participation,
+                impact_pct_at_full_participation=self.config.impact_pct,
+            ),
+            timing=self.config.fill_timing,
+        )
+
     def set_data_feed(self, feed: MarketDataFeed) -> None:
         """Set the data feed for backtesting."""
         self.data_feed = feed
@@ -270,6 +305,9 @@ class BacktestEngine:
         self.bar_count = 0
         self.trade_counter = 0
         self.data_buffer.clear()
+        self.pending.clear()
+        self.entry_bar.clear()
+        self.rejected_for_liquidity = 0
 
     def _process_bar(self, symbol: str, bar: OHLCV) -> None:
         """Process a single bar."""
@@ -290,6 +328,16 @@ class BacktestEngine:
         # Update open positions
         self._update_positions(symbol, bar)
 
+        # ATOS-P3-BT-001. Order matters here, and it is the whole fix.
+        #
+        # First, fill anything decided on the *previous* bar, against this
+        # bar. Then look at this bar and decide, which cannot fill until the
+        # next one arrives. Previously the engine generated a signal from a
+        # buffer that already contained this bar - including its close - and
+        # then filled at that same close, which is a price the decision helped
+        # produce and nobody could have traded.
+        self._execute_pending(symbol, bar)
+
         # Wait for warmup
         if self.bar_count < self.config.warmup_bars:
             return
@@ -297,9 +345,9 @@ class BacktestEngine:
         # Generate signals
         signal = self._generate_signal(symbol)
 
-        # Execute trades based on signal
+        # Queue for the next bar. Nothing executes against `bar` below here.
         if signal and signal.should_trade:
-            self._execute_signal(symbol, signal, bar)
+            self.pending[symbol] = signal
 
         # Record equity
         equity = self._calculate_equity(symbol, bar.close)
@@ -324,8 +372,14 @@ class BacktestEngine:
 
         return None
 
+    def _execute_pending(self, symbol: str, bar: OHLCV) -> None:
+        """Fill the decision taken on the previous bar, against this one."""
+        signal = self.pending.pop(symbol, None)
+        if signal is not None:
+            self._execute_signal(symbol, signal, bar)
+
     def _execute_signal(self, symbol: str, signal: StrategyOutput, bar: OHLCV) -> None:
-        """Execute trade based on signal."""
+        """Execute trade based on signal, against the bar it may fill on."""
         # Check position limits
         if len(self.positions) >= self.config.max_positions and symbol not in self.positions:
             return
@@ -342,15 +396,26 @@ class BacktestEngine:
             pass
 
     def _open_position(self, symbol: str, side: str, signal: StrategyOutput, bar: OHLCV) -> None:
-        """Open a new position."""
-        # Calculate position size
+        """Open a new position, filled on `bar` at a price that charges."""
+        fill_bar = self._as_fill_bar(bar)
+        if self.config.require_volume and fill_bar.volume <= 0:
+            # A bar with no recorded volume did not trade. Assuming it would
+            # have absorbed an order is how a backtest fills in illiquidity.
+            self.rejected_for_liquidity += 1
+            return
+
+        reference = self.fill_model.reference_price(fill_bar)
         position_value = self.capital * self.config.position_sizing_pct * signal.confidence
-        price = bar.close * (1 + self.config.slippage_pct)  # Add slippage for buy
-        quantity = position_value / price
+        requested = position_value / reference if reference > 0 else 0.0
 
-        commission = position_value * self.config.commission_pct
+        fill = self.fill_model.fill("buy", requested, fill_bar)
+        if not fill.filled:
+            self.rejected_for_liquidity += 1
+            return
+        if fill.capped_by_liquidity:
+            self.rejected_for_liquidity += 1
 
-        if position_value + commission > self.capital:
+        if fill.notional + fill.commission > self.capital:
             return  # Insufficient capital
 
         self.trade_counter += 1
@@ -359,16 +424,17 @@ class BacktestEngine:
             symbol=symbol,
             side=side,
             entry_time=bar.timestamp,
-            entry_price=price,
-            quantity=quantity,
-            commission=commission,
-            slippage=bar.close * self.config.slippage_pct * quantity,
+            entry_price=fill.price,
+            quantity=fill.quantity,
+            commission=fill.commission,
+            slippage=fill.slippage_per_unit * fill.quantity,
             signal_confidence=signal.confidence,
             strategy_name=signal.metadata.get("strategy", "unknown")
         )
 
         self.positions[symbol] = trade
-        self.capital -= (position_value + commission)
+        self.entry_bar[symbol] = self.bar_count
+        self.capital -= (fill.notional + fill.commission)
 
     def _close_position(self, symbol: str, bar: OHLCV) -> None:
         """Close an existing position."""
@@ -376,24 +442,40 @@ class BacktestEngine:
             return
 
         trade = self.positions[symbol]
-        price = bar.close * (1 - self.config.slippage_pct)  # Subtract slippage for sell
-        position_value = trade.quantity * price
+        fill_bar = self._as_fill_bar(bar)
+        fill = self.fill_model.fill("sell", trade.quantity, fill_bar)
+        if not fill.filled:
+            # Cannot get out on this bar. The position stays open and stays
+            # exposed, which is what would actually happen.
+            self.rejected_for_liquidity += 1
+            return
 
-        commission = position_value * self.config.commission_pct
+        price = fill.price
+        position_value = fill.notional
+
         trade.exit_time = bar.timestamp
         trade.exit_price = price
-        trade.commission += commission
-        trade.slippage += bar.close * self.config.slippage_pct * trade.quantity
+        trade.commission += fill.commission
+        trade.slippage += fill.slippage_per_unit * fill.quantity
 
         # Calculate P&L
-        gross_pnl = (price - trade.entry_price) * trade.quantity
+        gross_pnl = (price - trade.entry_price) * fill.quantity
         trade.pnl = gross_pnl - trade.commission
         trade.pnl_pct = trade.pnl / (trade.entry_price * trade.quantity)
-        trade.holding_period = self.bar_count
+        # Bars held, not the global bar count - which is what this used to
+        # record, making every trade look longer than the last.
+        trade.holding_period = self.bar_count - self.entry_bar.get(symbol, self.bar_count)
 
-        self.capital += position_value - commission
+        self.capital += position_value - fill.commission
         self.trades.append(trade)
         del self.positions[symbol]
+        self.entry_bar.pop(symbol, None)
+
+    def _as_fill_bar(self, bar: OHLCV) -> Bar:
+        return Bar(
+            open=bar.open, high=bar.high, low=bar.low, close=bar.close,
+            volume=getattr(bar, "volume", 0.0) or 0.0,
+        )
 
     def _update_positions(self, symbol: str, bar: OHLCV) -> None:
         """Update open positions with current prices."""
@@ -402,7 +484,14 @@ class BacktestEngine:
             trade.holding_period = self.bar_count
 
     def _close_all_positions(self) -> None:
-        """Close all open positions at end of backtest."""
+        """Close all open positions at end of backtest.
+
+        Anything still queued is discarded rather than filled: a decision
+        taken on the final bar has no next bar to fill against, and inventing
+        one is the same lookahead this engine was just fixed for.
+        """
+        self.pending.clear()
+
         for symbol in list(self.positions.keys()):
             data = self.data_buffer.get(symbol, [])
             if data:
