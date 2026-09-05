@@ -73,6 +73,7 @@ jobs:
             "Alpha IO/tests/test_llm_client.py" \
             "Alpha IO/tests/test_market_view.py" \
             "Alpha IO/tests/test_news_feed.py" \
+            "Alpha IO/tests/test_order_lifecycle_adversarial.py" \
             "Alpha IO/tests/test_pipeline_and_eval.py" \
             "Alpha IO/tests/test_plan_milestones.py" \
             "Alpha IO/tests/test_reports_scheduler.py" \
@@ -84,6 +85,9 @@ jobs:
             "Alpha IO/tests/test_terminal_view.py" \
             "Alpha IO/tests/test_unified_engine.py" \
             "Alpha IO/tests/test_web_security.py"
+
+      - name: Run adversarial suite (ATOS-P0-EXEC-001)
+        run: python -m pytest -q -m adversarial "Alpha IO/tests"
 
       - name: Run optional Alpaca paper smoke
         if: ${{ env.ALPACA_API_KEY != '' && env.ALPACA_API_SECRET != '' }}
