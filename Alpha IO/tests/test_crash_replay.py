@@ -126,13 +126,16 @@ def test_replay_reconstructs_risk_anchors_and_trips(tmp_path):
     from datetime import datetime, timezone
     day = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
 
-    risk = DurableRiskAnchors(RiskAnchorStore(store_path), max_daily_drawdown=0.05)
+    risk = DurableRiskAnchors(RiskAnchorStore(store_path),
+                              max_daily_drawdown=0.05, now=day)
     risk.observe_equity(10_000.0, now=day)
     risk.record_realized_pnl(-600.0, now=day)
     risk.observe_equity(9_400.0, now=day)
 
+    # The replaying process comes up on the same trading day, which is the
+    # case the invariant is about - a crash and a restart, not a rollover.
     replayed = DurableRiskAnchors(RiskAnchorStore(store_path),
-                                  max_daily_drawdown=0.05)
+                                  max_daily_drawdown=0.05, now=day)
     assert replayed.anchors.day_opening_equity == 10_000.0
     assert replayed.anchors.high_water_equity == 10_000.0
     assert replayed.tripped

@@ -243,11 +243,41 @@ class DurableRiskAnchors:
         store: RiskAnchorStore,
         max_daily_drawdown: float = 0.05,
         max_total_drawdown: float = 0.20,
+        now: Optional[datetime] = None,
     ) -> None:
         self.store = store
         self.max_daily_drawdown = max_daily_drawdown
         self.max_total_drawdown = max_total_drawdown
-        self.anchors = self._load_or_start(utc_trading_date())
+        #: The clock is an argument because the trading day is derived from
+        #: it. A component that can only be asked "what day is it" by looking
+        #: at the wall clock can only be tested on the day it was written.
+        self.anchors = self._load_or_start(utc_trading_date(now))
+
+    def _carry_high_water(
+        self, anchors: RiskAnchors, carried: Optional[float] = None,
+    ) -> RiskAnchors:
+        """Raise a day's high-water mark to the account's best ever.
+
+        Total drawdown is measured down from this mark, so a mark that is too
+        low measures a shallower loss and trips later than it should. It may
+        rise and must never fall - not on a restart, and not when a day is
+        entered through a row that was written before any equity was seen.
+        """
+        best = max(
+            (
+                value for value in (
+                    anchors.high_water_equity,
+                    carried,
+                    self.store.latest_high_water(),
+                )
+                if value is not None
+            ),
+            default=None,
+        )
+        if best is not None and best != anchors.high_water_equity:
+            anchors.high_water_equity = best
+            self.store.save(anchors)
+        return anchors
 
     def _load_or_start(self, trading_date: date) -> RiskAnchors:
         existing = self.store.load(trading_date)
@@ -256,7 +286,7 @@ class DurableRiskAnchors:
                 "Restored risk anchors for %s: opening equity %s, %d active trip(s)",
                 trading_date, existing.day_opening_equity, len(existing.active_trips),
             )
-            return existing
+            return self._carry_high_water(existing)
         anchors = RiskAnchors(
             trading_date=trading_date,
             high_water_equity=self.store.latest_high_water(),
@@ -276,7 +306,7 @@ class DurableRiskAnchors:
         )
         existing = self.store.load(trading_date)
         if existing is not None:
-            self.anchors = existing
+            self.anchors = self._carry_high_water(existing, carried)
             return
         self.anchors = RiskAnchors(
             trading_date=trading_date,

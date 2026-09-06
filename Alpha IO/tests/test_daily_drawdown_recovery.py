@@ -36,11 +36,19 @@ def store_path(tmp_path):
     return str(tmp_path / "anchors.sqlite")
 
 
-def anchors_at(store_path, daily=0.05, total=0.20):
+def anchors_at(store_path, daily=0.05, total=0.20, now=None):
+    """A fresh anchor set, as a restarted process would build one.
+
+    ``now`` is passed through deliberately. These tests pin a calendar date,
+    and a constructor that reads the wall clock instead would load a
+    different day's row from the one the test wrote - so the suite would pass
+    on the day it was written and fail every day after.
+    """
     return DurableRiskAnchors(
         RiskAnchorStore(store_path),
         max_daily_drawdown=daily,
         max_total_drawdown=total,
+        now=DAY if now is None else now,
     )
 
 
@@ -183,6 +191,39 @@ def test_the_high_water_mark_carries_across_days(store_path):
     risk.observe_equity(14_000.0, now=tomorrow)
     assert risk.anchors.high_water_equity == 15_000.0, (
         "total drawdown is measured from the account's best ever"
+    )
+
+
+def test_entering_a_day_row_written_before_any_equity_keeps_the_best_ever(store_path):
+    """A day can be opened twice: once at startup, once when the day arrives.
+
+    The first write happens before any equity is observed, so the row carries
+    no high-water mark. Rolling into it must not adopt that emptiness - total
+    drawdown measured from a lower peak is a shallower loss and a later trip.
+    """
+    tomorrow = DAY + timedelta(days=1)
+    # A process that starts on the later day writes that day's row first.
+    anchors_at(store_path, now=tomorrow)
+
+    risk = anchors_at(store_path, now=DAY)
+    risk.observe_equity(15_000.0, now=DAY)
+    risk.observe_equity(12_000.0, now=tomorrow)
+
+    assert risk.anchors.high_water_equity == 15_000.0
+    assert risk.anchors.total_drawdown_fraction(12_000.0) == pytest.approx(0.20)
+
+
+def test_a_restart_on_the_following_day_keeps_the_account_best_ever(store_path):
+    risk = anchors_at(store_path, now=DAY)
+    risk.observe_equity(15_000.0, now=DAY)
+
+    tomorrow = DAY + timedelta(days=1)
+    recovered = anchors_at(store_path, now=tomorrow)
+    assert recovered.anchors.high_water_equity == 15_000.0, (
+        "a restart on a new day measured total drawdown from a fresh peak"
+    )
+    assert recovered.anchors.day_opening_equity is None, (
+        "the new day has no opening anchor until equity is observed"
     )
 
 
