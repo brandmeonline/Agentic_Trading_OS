@@ -8,6 +8,10 @@ Each item records what the risk actually is, who accepted it, and what would
 turn it back into a blocker. An item with no escalation condition is not an
 accepted risk, it is an unresolved one with better manners.
 
+These items appear alongside everything else awaiting the owner in
+`docs/OWNER_ACTIONS.md`, which says which of them are due now and which are
+not yet.
+
 ---
 
 ## M-001 — Exposed Alpaca credential, revocation deferred

@@ -10,6 +10,10 @@ tracks what is outstanding. The description here used to end with a
 comparison against institutional trading desks, which was a claim with
 nothing behind it, so it is gone.
 
+What is left for a person rather than for code — the credentials to hold, the
+decisions to take, the grant to apply on the deployment host — is a checklist
+in `docs/OWNER_ACTIONS.md`.
+
 It supports:
 
 Crypto, macro, and equities domains
