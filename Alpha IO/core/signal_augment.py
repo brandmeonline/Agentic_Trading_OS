@@ -1,13 +1,10 @@
 # signal_augment.py – generate synthetic alpha signals based on past winners
 
 import pandas as pd
-import openai
+from core.llm_client import chat
 from core.signal_memory import SignalMemory
 from sklearn.cluster import KMeans
 import numpy as np
-import os
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class SignalAugmentor:
     def __init__(self, memory: SignalMemory):
@@ -43,13 +40,9 @@ class SignalAugmentor:
             # Identity unless ALPHAIO_HEADROOM=1, so prompts are unchanged by default.
             from utils.headroom_compress import compress_messages
             messages = compress_messages(messages, surface="signal_augment")
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=messages
-            )
             synthetic_signals.append({
                 "cluster": label,
-                "signals": response["choices"][0]["message"]["content"]
+                "signals": chat(messages)
             })
         return synthetic_signals
 

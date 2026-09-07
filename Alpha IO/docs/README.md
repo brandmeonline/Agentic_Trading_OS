@@ -1,24 +1,32 @@
 # Trading Agentic App
 
-This is a modular, autonomous, self-learning trading intelligence system built to detect early alpha signals, execute precision trades, and evolve over time through recursive memory and adaptive agents.
+A modular trading research and execution system: signal ingestion, agent
+arbitration, risk controls and a broker execution path.
 
 It supports:
 - Crypto, macro, and equities domains
 - Real-time signal ingestion
-- Swarm-based decision arbitration
+- Swarm-based decision arbitration, governed by `core/swarm_arbitration.py`
 - Asymmetry scoring to detect rare alpha
-- Execution via futures, options, spreads
 - Geographic and global trend overlays
-- Dynamic confidence and risk tuning
+- Dynamic confidence and risk tuning - tightening only
 
-Designed to outperform institutional bots by operating higher in the signal funnel at a fraction of the cost.
+**Live execution supports equities and crypto.** Futures, options and spreads
+are research output and are refused for live execution; see the root README
+and `MISSING_SEMANTICS` in `core/venue_rules.py`.
+
+**This system is not production ready.** `docs/READINESS_ASSESSMENT.md` and
+`docs/ULTRAPLAN_PRODUCTION_HARDENING.md` track what is outstanding, and
+`GET /api/ready` answers the question at runtime rather than in prose. The
+line that used to sit here compared this system favourably against
+institutional trading desks, on no evidence, so it is gone.
 
 ## Quick Start
 ```bash
 pip install -r requirements.txt
 cp .env.template .env  # Fill in your API keys
 python tests/backtest.py  # Run a simulation
-streamlit run dashboard/app.py  # Visual dashboard
+python run_web.py  # Dashboard + terminal at /terminal
 ```
 
 ## Key Modules

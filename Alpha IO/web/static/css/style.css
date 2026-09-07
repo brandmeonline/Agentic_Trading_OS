@@ -2978,3 +2978,420 @@ body {
     font-weight: 600;
     color: var(--success);
 }
+
+/* =============================================================================
+   Terminal — dense market workstation
+
+   Design notes worth keeping:
+
+   - Density over whitespace. A trading terminal is scanned, not read; every
+     panel is visible at once and nothing hides behind a submenu.
+   - Diverging colour: hue carries polarity (green up / red down, the domain
+     convention), lightness carries magnitude. Every cell also prints its signed
+     number, so the encoding survives red-green colour blindness and greyscale.
+     Poles validated against the dark card surface: CVD deltaE 8.1, normal-vision
+     33.8, both above target.
+   - Status colours are a separate, reserved role and always ship as icon +
+     label + value. State is never carried by colour alone.
+   ============================================================================= */
+
+.tm {
+    --tm-up:        #10b981;
+    --tm-up-rgb:    16, 185, 129;
+    --tm-down:      #ef4444;
+    --tm-down-rgb:  239, 68, 68;
+    --tm-neutral:   #1f2937;
+
+    /* Reserved status role — never reused for data series. */
+    --tm-good:      #0ca30c;
+    --tm-warn:      #fab219;
+    --tm-bad:       #d03b3b;
+
+    --tm-gap: 0.6rem;
+    --tm-line: 1px solid var(--border-color);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--tm-gap);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- cross-asset strip ---------- */
+
+.tm-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    gap: 1px;
+    background: var(--border-color);
+    border: var(--tm-line);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.tm-strip-empty {
+    grid-column: 1 / -1;
+    background: var(--bg-card);
+    padding: 0.75rem 0.9rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.tm-strip-cell {
+    background: var(--bg-card);
+    padding: 0.45rem 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    border-top: 2px solid transparent;
+}
+
+.tm-strip-cell.tm-up   { border-top-color: var(--tm-up); }
+.tm-strip-cell.tm-down { border-top-color: var(--tm-down); }
+.tm-strip-cell.tm-flat { border-top-color: var(--border-color); }
+
+.tm-strip-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.tm-strip-price { font-size: 0.95rem; font-weight: 600; }
+.tm-strip-change { font-size: 0.72rem; color: var(--text-secondary); }
+.tm-strip-cell.tm-up   .tm-strip-change { color: var(--tm-up); }
+.tm-strip-cell.tm-down .tm-strip-change { color: var(--tm-down); }
+
+/* ---------- readiness rail ---------- */
+
+.tm-rail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.7rem;
+    background: var(--bg-card);
+    border: var(--tm-line);
+    border-radius: 4px;
+}
+
+.tm-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    background: var(--bg-secondary);
+    font-size: 0.74rem;
+}
+
+.tm-chip-icon { font-size: 0.7rem; line-height: 1; }
+.tm-chip-label {
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-size: 0.62rem;
+    color: var(--text-muted);
+}
+.tm-chip-value { font-weight: 600; }
+
+.tm-chip[data-state="good"]    { border-color: var(--tm-good); }
+.tm-chip[data-state="good"]    .tm-chip-icon { color: var(--tm-good); }
+.tm-chip[data-state="warn"]    { border-color: var(--tm-warn); }
+.tm-chip[data-state="warn"]    .tm-chip-icon { color: var(--tm-warn); }
+.tm-chip[data-state="bad"]     { border-color: var(--tm-bad); }
+.tm-chip[data-state="bad"]     .tm-chip-icon { color: var(--tm-bad); }
+.tm-chip[data-state="unknown"] .tm-chip-icon { color: var(--text-muted); }
+
+.tm-rail-note {
+    flex: 1 1 100%;
+    margin: 0.15rem 0 0;
+    font-size: 0.74rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+.tm-rail-note[data-state="warn"] { color: var(--tm-warn); }
+.tm-rail-note[data-state="none"] { display: none; }
+
+/* ---------- grid ---------- */
+
+.tm-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: var(--tm-gap);
+}
+
+.tm-sectors        { grid-column: span 5; }
+.tm-breadth-panel  { grid-column: span 3; }
+.tm-candidates     { grid-column: span 4; }
+.tm-tape           { grid-column: span 8; }
+.tm-watchlist      { grid-column: span 4; }
+.tm-brief          { grid-column: span 12; }
+
+.tm-panel {
+    background: var(--bg-card);
+    border: var(--tm-line);
+    border-radius: 4px;
+    padding: 0.7rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.tm-panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border-bottom: var(--tm-line);
+    padding-bottom: 0.4rem;
+}
+
+.tm-panel-head h2 {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+}
+
+.tm-meta, .tm-hint {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+
+.tm-hint { margin: 0; line-height: 1.45; }
+.tm-empty { color: var(--text-muted); font-size: 0.8rem; margin: 0; }
+.tm-panel-body { min-width: 0; }
+.tm-scroll { max-height: 19rem; overflow-y: auto; overflow-x: auto; }
+
+/* ---------- heatmap ---------- */
+
+.tm-heatmap {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(102px, 1fr));
+    gap: 2px;                     /* surface gap between adjacent fills */
+}
+
+.tm-cell {
+    padding: 0.5rem 0.55rem;
+    border-radius: 3px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-height: 4.1rem;
+    justify-content: space-between;
+}
+
+.tm-cell-sym { font-size: 0.78rem; font-weight: 700; }
+.tm-cell-name {
+    font-size: 0.6rem;
+    color: var(--text-secondary);
+    line-height: 1.25;
+}
+.tm-cell-change { font-size: 0.85rem; font-weight: 600; }
+
+/* ---------- breadth ---------- */
+
+.tm-hero {
+    font-size: 2.1rem;
+    font-weight: 700;
+    line-height: 1.05;
+    display: flex;
+    flex-direction: column;
+}
+.tm-hero-unit {
+    font-size: 0.62rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.tm-meter {
+    display: flex;
+    gap: 2px;
+    height: 0.55rem;
+    background: var(--bg-secondary);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.tm-meter-up   { background: var(--tm-up); }
+.tm-meter-down { background: var(--tm-down); }
+
+.tm-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem 0.6rem;
+    margin: 0;
+    font-size: 0.74rem;
+}
+.tm-stats div { display: flex; justify-content: space-between; gap: 0.4rem; }
+.tm-stats dt { color: var(--text-muted); }
+.tm-stats dd { margin: 0; font-weight: 600; }
+
+/* ---------- tables & rows ---------- */
+
+.tm-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.tm-table th {
+    text-align: left;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-muted);
+    font-weight: 500;
+    padding: 0.25rem 0.35rem;
+    border-bottom: var(--tm-line);
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+}
+.tm-table td { padding: 0.3rem 0.35rem; border-bottom: 1px solid var(--bg-secondary); }
+.tm-table tr:last-child td { border-bottom: none; }
+.tm-r { text-align: right; }
+.tm-strong { font-weight: 600; }
+.tm-accent { color: var(--accent-primary); }
+
+.tm-tape-row {
+    display: grid;
+    grid-template-columns: 2.6rem 7rem 1fr 6rem;
+    gap: 0.6rem;
+    align-items: baseline;
+    padding: 0.32rem 0;
+    border-bottom: 1px solid var(--bg-secondary);
+    font-size: 0.78rem;
+}
+.tm-tape-row:last-child { border-bottom: none; }
+.tm-tape-time, .tm-tape-src, .tm-tape-ents {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+.tm-tape-ents { text-align: right; }
+
+.tm-watchgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 0.4rem;
+}
+.tm-watch {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.45rem 0.55rem;
+    background: var(--bg-secondary);
+    border: var(--tm-line);
+    border-radius: 3px;
+}
+.tm-watch-sym { font-size: 0.78rem; font-weight: 600; }
+.tm-watch-price { font-size: 0.95rem; }
+.tm-watch-cov { font-size: 0.62rem; color: var(--text-muted); }
+
+.tm-brief-body {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+
+/* ---------- direction ---------- */
+
+.tm-up   { color: var(--tm-up); }
+.tm-down { color: var(--tm-down); }
+.tm-flat { color: var(--text-secondary); }
+
+/* ---------- footer ---------- */
+
+.tm-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.45rem 0.7rem;
+    background: var(--bg-card);
+    border: var(--tm-line);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+.tm-keys kbd {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 0.05rem 0.3rem;
+    font-size: 0.68rem;
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 1100px) {
+    .tm-sectors, .tm-tape, .tm-brief { grid-column: span 12; }
+    .tm-breadth-panel, .tm-candidates, .tm-watchlist { grid-column: span 6; }
+}
+
+@media (max-width: 720px) {
+    .tm-grid > * { grid-column: span 12 !important; }
+    .tm-tape-row { grid-template-columns: 2.6rem 1fr; }
+    .tm-tape-src, .tm-tape-ents { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tm * { transition: none !important; animation: none !important; }
+}
+
+/* =============================================================================
+   Operator status bar - ATOS-P2-UI-001 / INV-ATOS-012
+   The bar is loud on purpose. It sits above the page title on every page and
+   is the first thing read, because the question it answers - "is what I am
+   looking at real?" - comes before every other question on the screen.
+   ============================================================================= */
+
+.operator-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 8px 24px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.operator-bar.level-ok       { background: #10381f; color: #b7f0c8; }
+.operator-bar.level-warning  { background: #4a3a10; color: #ffe08a; }
+.operator-bar.level-critical { background: #4d1414; color: #ffc9c9; }
+
+.operator-badges,
+.operator-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+}
+
+.op-badge {
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* Data trust gets its own colours regardless of the bar level: a DEMO panel
+   on an otherwise healthy page must still be unmissable. */
+.op-badge.trust-live        { background: #0f5132; color: #d1f7e0; border-color: #1c8d55; }
+.op-badge.trust-stale       { background: #664d03; color: #ffe69c; border-color: #b58900; }
+.op-badge.trust-invalid     { background: #58151c; color: #f7d4d7; border-color: #b02a37; }
+.op-badge.trust-demo        { background: #6a1b9a; color: #f3d9ff; border-color: #ab47bc; }
+.op-badge.trust-unavailable { background: #343a40; color: #dee2e6; border-color: #6c757d; }
+
+.op-metric { opacity: 0.85; white-space: nowrap; }
+.op-metric.breach { opacity: 1; font-weight: 700; text-decoration: underline; }
+
+.operator-banner {
+    flex: 1 1 100%;
+    font-weight: 600;
+    opacity: 0.95;
+}

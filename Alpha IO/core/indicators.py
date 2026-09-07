@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from enum import Enum
 
 
@@ -244,7 +244,7 @@ def cci(high: List[float], low: List[float], close: List[float],
     if len(high) < period:
         return [None] * len(high)
 
-    tp = [(h + l + c) / 3 for h, l, c in zip(high, low, close)]
+    tp = [(h + lo + c) / 3 for h, lo, c in zip(high, low, close)]
     tp_sma = sma(tp, period)
 
     result = [None] * (period - 1)
@@ -392,7 +392,7 @@ def vwap(high: List[float], low: List[float], close: List[float],
     if not high or not volume:
         return []
 
-    tp = [(h + l + c) / 3 for h, l, c in zip(high, low, close)]
+    tp = [(h + lo + c) / 3 for h, lo, c in zip(high, low, close)]
 
     cumulative_tp_vol = 0
     cumulative_vol = 0

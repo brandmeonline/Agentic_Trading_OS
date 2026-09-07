@@ -1,27 +1,46 @@
 # signal_memory.py – long-term vectorized memory of alpha signals
 
-import faiss
 import numpy as np
-import openai
-import pandas as pd
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+from core.llm_client import DEFAULT_EMBED_DIM, DEFAULT_EMBED_MODEL, embed
+
 
 class SignalMemory:
-    def __init__(self, dim=1536):
+    """FAISS-backed store of past signals, searchable by semantic similarity.
+
+    ``faiss`` is imported lazily so that importing this module — which
+    ``core.multi_agent_fusion_memory`` does at import time — does not require the
+    optional dependency to be installed.
+    """
+
+    def __init__(self, dim=DEFAULT_EMBED_DIM, model=DEFAULT_EMBED_MODEL):
         self.dim = dim
-        self.index = faiss.IndexFlatL2(dim)
+        self.model = model
+        self.index = self._new_index(dim)
         self.metadata = []
 
+    @staticmethod
+    def _new_index(dim):
+        try:
+            import faiss
+        except ImportError as exc:
+            raise ImportError(
+                "faiss is required for SignalMemory. Install it with: pip install faiss-cpu"
+            ) from exc
+        return faiss.IndexFlatL2(dim)
+
     def embed(self, text):
-        response = openai.Embedding.create(
-            input=text,
-            model="text-embedding-3-small"
-        )
-        return np.array(response["data"][0]["embedding"], dtype="float32")
+        """Embed text to a float32 vector.
+
+        Raises ``core.llm_client.LLMUnavailable`` when no key or SDK is present,
+        rather than failing inside a removed SDK symbol.
+        """
+        vector = np.array(embed(text, model=self.model), dtype="float32")
+        if vector.shape[0] != self.dim:
+            raise ValueError(
+                f"embedding dimension {vector.shape[0]} does not match index dimension {self.dim}"
+            )
+        return vector
 
     def add_signal(self, text, metadata):
         vector = self.embed(text)
@@ -29,9 +48,12 @@ class SignalMemory:
         self.metadata.append(metadata)
 
     def search_similar(self, query_text, k=5):
+        if not self.metadata:
+            return []
         query_vector = self.embed(query_text)
-        D, I = self.index.search(np.array([query_vector]), k)
-        return [self.metadata[i] for i in I[0] if i < len(self.metadata)]
+        _, indices = self.index.search(np.array([query_vector]), min(k, len(self.metadata)))
+        return [self.metadata[i] for i in indices[0] if 0 <= i < len(self.metadata)]
+
 
 # Example usage
 if __name__ == "__main__":

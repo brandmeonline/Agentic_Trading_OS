@@ -8,12 +8,10 @@ including live feeds, historical data, and simulated data.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable, Any, Iterator
+from typing import Dict, List, Optional, Callable, Any
 from enum import Enum
-import time
-from collections import deque
 import numpy as np
 
 
@@ -322,7 +320,7 @@ class CSVDataFeed(MarketDataFeed):
                         volume=float(row.get('Volume', row.get('volume', 0)))
                     )
                     bars.append(bar)
-                except (ValueError, KeyError) as e:
+                except (ValueError, KeyError):
                     continue
 
         return bars

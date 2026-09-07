@@ -11,12 +11,10 @@ This script provides:
 
 import os
 import sys
-import json
 import time
 import getpass
 import argparse
 from pathlib import Path
-from datetime import datetime
 
 # Add paths
 sys.path.insert(0, str(Path(__file__).parent))
@@ -50,7 +48,7 @@ BANNER = """
 ║                             ╚██████╔╝███████║                                ║
 ║                              ╚═════╝ ╚══════╝                                ║
 ║                                                                              ║
-║                    Production-Ready Algorithmic Trading                      ║
+║      Algorithmic Trading - run readiness checks before trusting it           ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -81,61 +79,61 @@ def check_system():
 
     # Check each component
     try:
-        from core.config_manager import ConfigManager
+        from core.config_manager import ConfigManager  # noqa: F401 - availability probe
         components["config_manager"] = True
     except ImportError:
         pass
 
     try:
-        from core.credentials import CredentialsManager
+        from core.credentials import CredentialsManager  # noqa: F401 - availability probe
         components["credentials"] = True
     except ImportError:
         pass
 
     try:
-        from core.live_data import LiveDataManager
+        from core.live_data import LiveDataManager  # noqa: F401 - availability probe
         components["live_data"] = True
     except ImportError:
         pass
 
     try:
-        from core.database import DatabaseManager
+        from core.database import DatabaseManager  # noqa: F401 - availability probe
         components["database"] = True
     except ImportError:
         pass
 
     try:
-        from core.rest_api import RESTAPIServer
+        from core.rest_api import RESTAPIServer  # noqa: F401 - availability probe
         components["rest_api"] = True
     except ImportError:
         pass
 
     try:
-        from core.exchange_connectors import ExchangeConnector
+        from core.exchange_connectors import ExchangeConnector  # noqa: F401 - availability probe
         components["exchange_connectors"] = True
     except ImportError:
         pass
 
     try:
-        from core.alpaca_connector import AlpacaClient
+        from core.alpaca_connector import AlpacaClient  # noqa: F401 - availability probe
         components["alpaca_connector"] = True
     except ImportError:
         pass
 
     try:
-        from core.strategy import Strategy
+        from core.strategy import Strategy  # noqa: F401 - availability probe
         components["strategies"] = True
     except ImportError:
         pass
 
     try:
-        from core.orchestrator import TradingOrchestrator
+        from core.orchestrator import TradingOrchestrator  # noqa: F401 - availability probe
         components["orchestrator"] = True
     except ImportError:
         pass
 
     try:
-        from core.advanced_rl import PPOAgent
+        from core.advanced_rl import PPOAgent  # noqa: F401 - availability probe
         components["advanced_rl"] = True
     except ImportError:
         pass
@@ -167,7 +165,7 @@ def setup_credentials_interactive():
     print("="*60)
 
     try:
-        from core.credentials import get_credentials_manager, TESTNET_ENDPOINTS
+        from core.credentials import get_credentials_manager, TESTNET_ENDPOINTS  # noqa: F401 - availability probe
     except ImportError:
         print("  ✗ Credentials module not available")
         return False
@@ -456,7 +454,7 @@ def quick_start_menu():
                     api_key = cred.get("api_key", "")
                     api_secret = cred.get("api_secret", "")
                     print("  Using stored Alpaca credentials")
-            except:
+            except Exception:
                 pass
 
             if not api_key:
@@ -528,7 +526,7 @@ def quick_start_menu():
                     api_key = cred.get("api_key", "")
                     api_secret = cred.get("api_secret", "")
                     print("  Using stored Alpaca credentials")
-            except:
+            except Exception:
                 pass
 
             if not api_key:
@@ -536,7 +534,7 @@ def quick_start_menu():
                 api_secret = input("  Secret Key: ").strip()
 
             try:
-                from core.alpaca_connector import create_alpaca_client, test_alpaca_client
+                from core.alpaca_connector import test_alpaca_client
                 test_alpaca_client(api_key, api_secret)
             except Exception as e:
                 print(f"\n  ✗ Connection failed: {e}")
@@ -547,7 +545,7 @@ def quick_start_menu():
                 from core.live_data import create_binance_client
                 client = create_binance_client()
                 ticker = client.get_ticker("BTCUSDT")
-                print(f"\n  ✓ Connection successful!")
+                print("\n  ✓ Connection successful!")
                 print(f"  BTC/USDT: ${ticker.price:,.2f}")
             except Exception as e:
                 print(f"\n  ✗ Connection failed: {e}")
@@ -581,6 +579,15 @@ Examples:
 
     parser.add_argument("--mode", choices=["paper", "live", "backtest"],
                        help="Trading mode")
+    # ATOS-P0-AUTH-001: --mode live is a preference. These are the
+    # instruction. Both are required, and the acknowledgement must match
+    # exactly, so no script produces them by accident.
+    parser.add_argument("--i-am-authorizing-real-money", action="store_true",
+                       dest="explicit_live_flag",
+                       help="Explicit live-trading flag. Required with --mode live.")
+    parser.add_argument("--risk-acknowledgement", default=None,
+                       help="Must be exactly: "
+                            "'I UNDERSTAND THIS TRADES REAL MONEY'")
     parser.add_argument("--symbols", nargs="+", default=["BTC/USDT", "ETH/USDT"],
                        help="Trading symbols")
     parser.add_argument("--capital", type=float, default=100000.0,
@@ -617,6 +624,26 @@ Examples:
             print("  Set BINANCE_API_KEY and BINANCE_API_SECRET environment variables")
         return
 
+    # ATOS-P0-AUTH-001: refuse a live start that carries only a mode string,
+    # before anything is constructed or any credential is touched.
+    if args.mode == "live":
+        from core.live_authorization import LiveAuthorizationRequest
+
+        required = LiveAuthorizationRequest().required_acknowledgement
+        if not args.explicit_live_flag:
+            print("\n  ✗ Refusing --mode live without --i-am-authorizing-real-money.")
+            print("    A mode string is a preference, not an instruction to")
+            print("    risk money (ATOS-P0-AUTH-001).")
+            return 2
+        if (args.risk_acknowledgement or "").strip() != required:
+            print("\n  ✗ Refusing --mode live: the risk acknowledgement is missing")
+            print("    or does not match exactly. Required:")
+            print(f"      --risk-acknowledgement '{required}'")
+            return 2
+        print("\n  Live flags accepted. The system will still refuse to")
+        print("  activate unless every startup and authorization condition")
+        print("  is satisfied.")
+
     # Run with mode
     if args.mode:
         print(BANNER)
@@ -630,4 +657,6 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    # Propagate the exit code: a refused live activation must be detectable
+    # by a script or a CI job, not just visible on a terminal.
+    sys.exit(main() or 0)

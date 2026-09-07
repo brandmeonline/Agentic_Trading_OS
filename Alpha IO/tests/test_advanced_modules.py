@@ -14,7 +14,7 @@ Tests:
 import numpy as np
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -49,7 +49,7 @@ class ModuleTestRunner:
         print(f"\n{'='*60}")
         print(f"Test Summary: {self.passed}/{total} passed")
         if self.errors:
-            print(f"\nFailed tests:")
+            print("\nFailed tests:")
             for name, error in self.errors:
                 print(f"  - {name}: {error}")
         print(f"{'='*60}")
@@ -83,7 +83,7 @@ def test_feature_engineering():
         # Test FeatureConfig
         def test_config():
             config = FeatureConfig()
-            assert config.normalize_features == True
+            assert config.normalize_features is True
             assert len(config.lookback_periods) > 0
 
         runner.run_test("FeatureConfig initialization", test_config)
@@ -156,7 +156,7 @@ def test_deep_learning():
     try:
         from core.deep_learning import (
             LSTMAttentionModel, TemporalFusionTransformer,
-            NBEATSModel, WaveNetModel, AlphaModelEnsemble,
+            NBEATSModel, WaveNetModel, AlphaModelEnsemble,  # noqa: F401 - availability probe
             DeepAlphaGenerator, ModelConfig
         )
 
@@ -236,8 +236,8 @@ def test_nlp_sentiment():
 
     try:
         from core.nlp_engine import (
-            NLPEngine, SentimentAnalyzer, NewsProcessor,
-            SocialMediaAnalyzer, SentimentType, NLPConfig
+            NLPEngine, SentimentAnalyzer, NewsProcessor,  # noqa: F401 - availability probe
+            SocialMediaAnalyzer, SentimentType, NLPConfig  # noqa: F401 - availability probe
         )
 
         # Test NLPConfig
@@ -313,14 +313,14 @@ def test_smart_routing():
         from core.smart_router import (
             SmartOrderRouter, RoutingConfig, VenueConfig,
             VenueType, OrderUrgency, TransactionCostModel,
-            VenueAnalyzer, LiquidityAggregator
+            VenueAnalyzer, LiquidityAggregator  # noqa: F401 - availability probe
         )
 
         # Test RoutingConfig
         def test_config():
             config = RoutingConfig()
             assert config.max_slippage_bps > 0
-            assert config.smart_routing == True
+            assert config.smart_routing is True
 
         runner.run_test("RoutingConfig initialization", test_config)
 
@@ -391,7 +391,7 @@ def test_stress_testing():
     try:
         from core.stress_testing import (
             StressTester, StressConfig, ScenarioGenerator,
-            ExtremeValueAnalyzer, TailRiskHedger, CrisisSimulator,
+            ExtremeValueAnalyzer, TailRiskHedger, CrisisSimulator,  # noqa: F401 - availability probe
             CrisisType, HISTORICAL_SCENARIOS
         )
 
@@ -477,7 +477,7 @@ def test_advanced_backtest():
 
     try:
         from core.advanced_backtest import (
-            WalkForwardOptimizer, WalkForwardConfig,
+            WalkForwardOptimizer, WalkForwardConfig,  # noqa: F401 - availability probe
             MonteCarloSimulator, MonteCarloConfig,
             RegimeAwareBacktest, OutOfSampleValidator, ValidationConfig
         )
@@ -556,7 +556,7 @@ def test_unified_system():
 
     try:
         from core.unified_system import (
-            UnifiedTradingEngine, SystemConfig, SystemMode,
+            UnifiedTradingEngine, SystemConfig, SystemMode,  # noqa: F401 - availability probe
             TradeSignal, SignalSource, SignalAggregator,
             TradeExecutor, RiskController, create_trading_system
         )
@@ -615,7 +615,7 @@ def test_unified_system():
                 last_update=datetime.now()
             )
             status = controller.check_risk_limits(state)
-            assert status["is_safe"] == True
+            assert status["is_safe"] is True
 
         runner.run_test("RiskController risk limit checking", test_risk)
 
@@ -669,8 +669,8 @@ def test_monitoring():
     try:
         from core.monitoring import (
             SystemMonitor, MonitoringConfig, AlertSeverity,
-            MetricsCollector, HealthChecker, AlertManager,
-            Counter, Gauge, Histogram
+            MetricsCollector, HealthChecker, AlertManager,  # noqa: F401 - availability probe
+            Counter, Gauge, Histogram  # noqa: F401 - availability probe
         )
 
         # Test MonitoringConfig
@@ -761,7 +761,7 @@ def test_realtime_data():
 
     try:
         from core.realtime_data import (
-            RealtimeDataManager, DataConfig, DataNormalizer,
+            RealtimeDataManager, DataConfig, DataNormalizer,  # noqa: F401 - availability probe
             StreamProcessor, FeatureStore, MarketTick,
             CircuitBreaker
         )
@@ -817,12 +817,12 @@ def test_realtime_data():
         # Test CircuitBreaker
         def test_circuit_breaker():
             cb = CircuitBreaker(failure_threshold=3)
-            assert cb.can_execute() == True
+            assert cb.can_execute() is True
 
             for _ in range(3):
                 cb.record_failure()
 
-            assert cb.can_execute() == False
+            assert cb.can_execute() is False
             assert cb.state == CircuitBreaker.State.OPEN
 
         runner.run_test("CircuitBreaker state transitions", test_circuit_breaker)

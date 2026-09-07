@@ -356,21 +356,47 @@ def test_trading_state_stop_joins_price_thread():
     assert state._price_thread is None
 
 
-def test_order_placement_error_does_not_leak_exception_details():
-    class FailingAlpacaClient:
+def test_manual_order_without_an_execution_engine_is_refused():
+    """ATOS-P1-AGENT-001: the dashboard must not reach the broker directly.
+
+    This method used to call alpaca_client.place_market_order, so a dashboard
+    button created real exposure while skipping the order-intent WAL, the
+    lifecycle state machine, idempotency, the risk engine and live
+    authorization. With no engine attached it now refuses rather than falling
+    back to the broker.
+    """
+    class ShouldNeverBeCalled:
         def place_market_order(self, symbol, qty, side):
+            raise AssertionError("the dashboard reached the broker directly")
+
+    state = TradingState()
+    state.alpaca_client = ShouldNeverBeCalled()
+    state.alpaca_connected = True
+
+    response = state.submit_manual_order("AAPL", 1, "buy")
+
+    assert response["success"] is False
+    assert "execution boundary" in response["error"]
+
+
+def test_order_placement_error_does_not_leak_exception_details():
+    """A failure inside the engine must not surface broker internals."""
+    class FailingEngine:
+        def create_order(self, **kwargs):
             raise RuntimeError("broker-secret-token leaked")
 
     state = TradingState()
-    state.alpaca_client = FailingAlpacaClient()
+    state.execution_engine = FailingEngine()
+    state.alpaca_client = object()
     state.alpaca_connected = True
 
-    response = state.place_order("AAPL", 1, "buy")
+    response = state.submit_manual_order("AAPL", 1, "buy")
 
     assert response == {
         "success": False,
         "error": "Order placement failed",
     }
+    assert "broker-secret-token" not in str(response)
 
 
 def test_credentials_connection_error_does_not_leak_exception_details(monkeypatch):

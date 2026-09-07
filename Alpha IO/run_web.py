@@ -17,7 +17,7 @@ def check_dependencies():
     missing = []
 
     try:
-        import flask
+        import flask  # noqa: F401 - availability probe
     except ImportError:
         missing.append('flask')
 
@@ -35,14 +35,17 @@ def main():
     print("="*60)
 
     if not check_dependencies():
-        print("\nInstalling Flask...")
-        os.system(f"{sys.executable} -m pip install flask")
+        print("\nFlask is not installed. Install it with:")
+        print(f"  {sys.executable} -m pip install flask")
+        return 1
 
     # Import and run
     from web.app import run_server
 
     # Get config from environment or defaults
-    host = os.environ.get('WEB_HOST', '0.0.0.0')
+    # Loopback unless WEB_HOST says otherwise. A dashboard that can place
+    # orders should not be reachable from the network by default.
+    host = os.environ.get('WEB_HOST', '127.0.0.1')
     port = int(os.environ.get('WEB_PORT', '5000'))
     debug = os.environ.get('WEB_DEBUG', '').lower() == 'true'
     password = os.environ.get('WEB_PASSWORD') or os.environ.get('ADMIN_PASSWORD')
@@ -60,18 +63,29 @@ def main():
         print("WEB_SECRET_KEY or SECRET_KEY is required when WEB_DEBUG is not true.")
         return 1
 
-    print(f"\n  Starting web server...")
+    # Background services (ingestion, scheduled brief, corpus alert sweep) are
+    # all opt-in. Starting the dashboard must not silently begin polling
+    # external feeds; see core/services.py for the environment variables.
+    from core.services import describe_startup, start_background_services, stop_background_services
+
+    services = start_background_services()
+    print(f"  {describe_startup(services)}")
+
+    print("\n  Starting web server...")
     print(f"  URL: http://localhost:{port}")
     print("  Login: configured admin user")
     print("\n  Press Ctrl+C to stop.\n")
 
-    run_server(
-        host=host,
-        port=port,
-        debug=debug,
-        admin_password=password,
-        admin_password_hash_path=str(password_hash_file)
-    )
+    try:
+        run_server(
+            host=host,
+            port=port,
+            debug=debug,
+            admin_password=password,
+            admin_password_hash_path=str(password_hash_file)
+        )
+    finally:
+        stop_background_services()
     return 0
 
 if __name__ == "__main__":

@@ -43,9 +43,13 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
+# Copy application code.
+# ATOS-P2-DEPLOY-001: `COPY config/ ./config/` used to be here. There is no
+# config/ at the repository root, so the build failed outright; and had one
+# existed it would have baked whatever it held into the image. Runtime
+# configuration and credentials are mounted or injected, never copied. See
+# .dockerignore for the paths excluded from the COPY below.
 COPY Alpha\ IO/ ./Alpha\ IO/
-COPY config/ ./config/
 COPY setup.sh ./
 
 # Create directories with proper permissions
@@ -64,7 +68,14 @@ USER trading
 # Expose API port
 EXPOSE 8080
 
-# Health check
+# Liveness only - ATOS-P2-DEPLOY-001.
+#
+# Docker's HEALTHCHECK drives restarts, so it must be wired to liveness and
+# never to readiness. A trading system that is unsafe to trade is usually
+# worse off restarted: the restart discards what it had established about the
+# broker's book and re-opens the question of what is actually held.
+# Readiness is a separate, non-restarting probe at /api/v1/ready, which
+# returns 503 while the system may not add new risk.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health')" || exit 1
 

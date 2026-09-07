@@ -13,9 +13,8 @@ Next-generation AI-powered trading assistant with:
 from __future__ import annotations
 
 import re
-import json
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
 from enum import Enum
@@ -508,7 +507,6 @@ class MarketAnalyzer:
     def _generate_recommendation(self, prices: List[float]) -> Dict:
         """Generate trading recommendation."""
         tech = self._technical_analysis(prices)
-        risk = self._calculate_risk_metrics(prices)
 
         # Score calculation
         trend_score = 60 if tech.get("trend") == "bullish" else 40 if tech.get("trend") == "bearish" else 50
@@ -759,7 +757,7 @@ class AITradingAssistant:
         if not command.price:
             return AIResponse(
                 message=f"At what price should I alert you for {symbol}?",
-                suggestions=[f"Alert at $150", f"When {symbol} drops 5%"],
+                suggestions=["Alert at $150", f"When {symbol} drops 5%"],
                 confidence=0.6
             )
 

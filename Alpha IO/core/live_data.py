@@ -10,18 +10,17 @@ Real-time market data from exchanges and free data sources:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import threading
-import queue
 import hashlib
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Tuple, Union
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
-from datetime import datetime, timedelta
-from collections import deque
+from datetime import datetime
 import urllib.request
+
+from core.net_guard import assert_permitted
 import urllib.parse
 import urllib.error
 import ssl
@@ -137,7 +136,7 @@ class HTTPClient:
             url = f"{url}?{query_string}"
 
         # Check cache
-        cache_key = hashlib.md5(url.encode()).hexdigest()
+        cache_key = hashlib.md5(url.encode(), usedforsecurity=False).hexdigest()
         if use_cache:
             cached = self._get_cached(cache_key)
             if cached is not None:
@@ -157,7 +156,9 @@ class HTTPClient:
                     for key, value in headers.items():
                         request.add_header(key, value)
 
-                with urllib.request.urlopen(
+                assert_permitted(request)
+                # Scheme checked by assert_permitted() immediately above.
+                with urllib.request.urlopen(  # nosec B310
                     request,
                     timeout=self.config.request_timeout,
                     context=self._ssl_context
@@ -726,7 +727,7 @@ def test_live_data():
 
     try:
         # Simple ping test
-        data = http.get("https://api.binance.com/api/v3/ping")
+        http.get("https://api.binance.com/api/v3/ping")
         print("   ✓ Binance API reachable")
     except Exception as e:
         print(f"   ✗ Binance API error: {e}")
@@ -764,7 +765,7 @@ def test_live_data():
     try:
         # Get prices
         prices = coingecko.get_price(["BTC", "ETH", "SOL"])
-        print(f"   ✓ Prices from CoinGecko:")
+        print("   ✓ Prices from CoinGecko:")
         for symbol, price in prices.items():
             print(f"     {symbol}: ${price:,.2f}")
 
@@ -784,7 +785,7 @@ def test_live_data():
     try:
         # Get multi-source price
         multi_prices = manager.get_multi_source_price("BTC/USDT")
-        print(f"   ✓ Multi-source BTC prices:")
+        print("   ✓ Multi-source BTC prices:")
         for source, price in multi_prices.items():
             print(f"     {source}: ${price:,.2f}")
 

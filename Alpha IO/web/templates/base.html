@@ -33,6 +33,12 @@
                         <span class="nav-text">Trading</span>
                     </a>
                 </li>
+                <li class="nav-item {% if request.endpoint == 'terminal' %}active{% endif %}">
+                    <a href="{{ url_for('terminal') }}">
+                        <span class="nav-icon">&#128225;</span>
+                        <span class="nav-text">Terminal</span>
+                    </a>
+                </li>
                 <li class="nav-item {% if request.endpoint == 'analytics' %}active{% endif %}">
                     <a href="{{ url_for('analytics') }}">
                         <span class="nav-icon">&#128202;</span>
@@ -94,6 +100,47 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <!--
+              Global operator status bar - ATOS-P2-UI-001 / INV-ATOS-012.
+              Rendered on every page from a context processor, so a new page
+              cannot be added without it. Server-rendered first so the bar is
+              correct before any JavaScript runs; refreshed in place after.
+            -->
+            <div class="operator-bar level-{{ operator_status.banner.level }}"
+                 id="operator-bar"
+                 role="status" aria-live="polite">
+                <div class="operator-badges">
+                    <span class="op-badge op-mode" id="op-mode"
+                          title="Operating mode">MODE {{ operator_status.mode }}</span>
+                    <span class="op-badge op-broker" id="op-broker"
+                          title="Broker and account fingerprint">BROKER {{ operator_status.broker }} · {{ operator_status.broker_account }}</span>
+                    <span class="op-badge op-data trust-{{ operator_status.data|lower }}" id="op-data"
+                          title="Worst data trust level on this page">DATA {{ operator_status.data }}</span>
+                    <span class="op-badge op-exec" id="op-exec"
+                          title="Whether orders may reach a broker">EXEC {{ operator_status.execution }}</span>
+                    <span class="op-badge op-recon" id="op-recon"
+                          title="Broker reconciliation result">RECON {{ operator_status.reconciliation }}</span>
+                </div>
+                <div class="operator-metrics" id="operator-metrics">
+                    <span class="op-metric" id="op-broker-age">broker
+                        {% if operator_status.broker_connection_age_seconds is none %}never
+                        {% else %}{{ "%.0f"|format(operator_status.broker_connection_age_seconds) }}s ago{% endif %}</span>
+                    <span class="op-metric" id="op-data-age">data
+                        {% if operator_status.market_data_age_seconds is none %}never
+                        {% else %}{{ "%.0f"|format(operator_status.market_data_age_seconds) }}s ago{% endif %}</span>
+                    <span class="op-metric {% if operator_status.capital_breached %}breach{% endif %}" id="op-capital">risk
+                        ${{ "%.0f"|format(operator_status.effective_capital_at_risk) }} /
+                        {% if operator_status.capital_tier_limit is none %}no tier{% else %}${{ "%.0f"|format(operator_status.capital_tier_limit) }}{% endif %}</span>
+                    <span class="op-metric" id="op-reserved">reserved ${{ "%.0f"|format(operator_status.reserved_capital) }}</span>
+                    <span class="op-metric {% if operator_status.unknown_order_count %}breach{% endif %}" id="op-orders">orders
+                        {{ operator_status.open_order_count }} open / {{ operator_status.unknown_order_count }} unknown</span>
+                    <span class="op-metric {% if operator_status.active_risk_trips %}breach{% endif %}" id="op-trips">trips
+                        {% if operator_status.active_risk_trips %}{{ operator_status.active_risk_trips|join(", ") }}{% else %}none{% endif %}</span>
+                    <span class="op-metric {% if not operator_status.persistence_healthy %}breach{% endif %}" id="op-persist">persistence
+                        {% if operator_status.persistence_healthy %}ok{% else %}unconfirmed{% endif %}</span>
+                </div>
+                <div class="operator-banner" id="operator-banner">{{ operator_status.banner.text }}</div>
+            </div>
             <header class="top-header">
                 <div class="header-left">
                     <h1>{% block page_title %}Dashboard{% endblock %}</h1>
@@ -131,6 +178,7 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/operator-status.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

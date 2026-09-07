@@ -7,10 +7,11 @@ without requiring external data sources.
 
 from __future__ import annotations
 
+import ast
 import csv
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import numpy as np
 from dataclasses import dataclass
 
@@ -90,7 +91,8 @@ class SampleDataGenerator:
         # Convert annual params to per-bar
         dt = timeframe_minutes / (252 * 24 * 60)  # Fraction of year
         bar_drift = config.drift * dt
-        bar_vol = config.volatility * np.sqrt(dt)
+        # Per-bar volatility is not used directly: the walk is generated
+        # tick by tick below, so tick_vol is the scale that applies.
 
         for _ in range(num_bars):
             # Generate intrabar prices using GBM
@@ -365,7 +367,7 @@ def generate_sample_dataset(output_dir: str = "data", seed: int = 42) -> None:
     print("Generating signal scores...")
     signals = []
     for tweet in tweets:
-        tickers = eval(tweet["tickers"])
+        tickers = ast.literal_eval(tweet["tickers"])
         for ticker in tickers:
             price_change = np.random.uniform(-5, 5)
             if tweet["sentiment"] == "bullish":

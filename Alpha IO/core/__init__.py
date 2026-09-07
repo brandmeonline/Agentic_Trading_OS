@@ -15,7 +15,7 @@ __all__ = []
 try:
     from core.agent import TradingAgent, AgentConfig, LearningAlgorithm
     __all__.extend(["TradingAgent", "AgentConfig", "LearningAlgorithm"])
-except ImportError as e:
+except ImportError:
     TradingAgent = None
     AgentConfig = None
     LearningAlgorithm = None
@@ -23,7 +23,7 @@ except ImportError as e:
 try:
     from core.risk import RiskManager, RiskConfig, RiskLevel
     __all__.extend(["RiskManager", "RiskConfig", "RiskLevel"])
-except ImportError as e:
+except ImportError:
     RiskManager = None
     RiskConfig = None
     RiskLevel = None
@@ -31,7 +31,7 @@ except ImportError as e:
 try:
     from core.execution import ExecutionEngine, ExecutionConfig, Order, OrderType, OrderSide
     __all__.extend(["ExecutionEngine", "ExecutionConfig", "Order", "OrderType", "OrderSide"])
-except ImportError as e:
+except ImportError:
     ExecutionEngine = None
     ExecutionConfig = None
 
@@ -52,6 +52,75 @@ try:
     __all__.append("AsymmetryIndex")
 except ImportError:
     AsymmetryIndex = None
+
+try:
+    from core.news_feed import NewsFeedService, NewsCorpus, FeedSource, NewsItem
+    __all__.extend(["NewsFeedService", "NewsCorpus", "FeedSource", "NewsItem"])
+except ImportError:
+    NewsFeedService = None
+    NewsCorpus = None
+    FeedSource = None
+    NewsItem = None
+
+try:
+    from core.scheduler import Scheduler, DailyAt, Interval
+    __all__.extend(["Scheduler", "DailyAt", "Interval"])
+except ImportError:
+    Scheduler = None
+    DailyAt = None
+    Interval = None
+
+try:
+    from core.market_view import MarketView, build_market_view
+    __all__.extend(["MarketView", "build_market_view"])
+except ImportError:
+    MarketView = None
+    build_market_view = None
+
+try:
+    from core.pipeline import TradingPipeline, PipelineMode
+    __all__.extend(["TradingPipeline", "PipelineMode"])
+except ImportError:
+    TradingPipeline = None
+    PipelineMode = None
+
+try:
+    from core.signal_eval import SignalEvaluator, EdgeReport, Verdict
+    __all__.extend(["SignalEvaluator", "EdgeReport", "Verdict"])
+except ImportError:
+    SignalEvaluator = None
+    EdgeReport = None
+    Verdict = None
+
+try:
+    from core.services import (
+        BackgroundServices, ServiceConfig, start_background_services,
+        stop_background_services, get_background_services,
+    )
+    __all__.extend([
+        "BackgroundServices", "ServiceConfig", "start_background_services",
+        "stop_background_services", "get_background_services",
+    ])
+except ImportError:
+    BackgroundServices = None
+    ServiceConfig = None
+    start_background_services = None
+    stop_background_services = None
+    get_background_services = None
+
+try:
+    from core.reports import (
+        BriefGenerator, MorningBrief, install_morning_brief, install_corpus_alert_sweep,
+    )
+    __all__.extend([
+        "BriefGenerator", "MorningBrief", "install_morning_brief",
+        "install_corpus_alert_sweep",
+    ])
+except ImportError:
+    BriefGenerator = None
+    MorningBrief = None
+    install_morning_brief = None
+    install_corpus_alert_sweep = None
 
 try:
     from core.auto_tuner import AutoTuner

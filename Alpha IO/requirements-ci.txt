@@ -1,0 +1,26 @@
+# CI tooling — ATOS-P2-CI-001.
+#
+# Pinned to exact versions on purpose. An unpinned linter turns somebody
+# else's release into a red build on a change that touched nothing, and the
+# usual response to that is to stop trusting the gate. Bump these
+# deliberately, in their own change, so a new rule arrives as a reviewed diff
+# rather than as a surprise.
+#
+# Application dependencies live in requirements.txt; this file is only the
+# tools that inspect the application.
+
+ruff==0.15.8
+mypy==1.19.1
+bandit==1.9.4
+pip-audit==2.10.1
+pytest==9.1.1
+pytest-cov==7.1.0
+coverage==7.16.0
+
+# Pinned here as well as declared in requirements.txt, because mypy's result
+# depends on the version of numpy's bundled stubs: CI failed on a
+# `floating[Any] | int` assignment that a different numpy typed as `float`,
+# with the same mypy version. A static gate whose verdict changes without the
+# code changing is a gate people learn to ignore. requirements.txt still
+# states the range the application supports; this pins what the checks see.
+numpy==2.4.6

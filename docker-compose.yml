@@ -32,7 +32,7 @@ services:
       - DB_PORT=5432
       - DB_NAME=trading
       - DB_USERNAME=${DB_USERNAME:-trading}
-      - DB_PASSWORD=${DB_PASSWORD:-trading123}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set; a baked-in default secret is worse than a failed start}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
@@ -63,7 +63,7 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${DB_USERNAME:-trading}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-trading123}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set; a baked-in default secret is worse than a failed start}
       - POSTGRES_DB=trading
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -128,7 +128,7 @@ services:
     restart: unless-stopped
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set; a baked-in default secret is worse than a failed start}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana-data:/var/lib/grafana

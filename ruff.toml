@@ -1,0 +1,38 @@
+# Ruff configuration — ATOS-P2-CI-001.
+#
+# Ruff is a blocking CI gate, which only means anything if the repository is
+# clean against it. It is: everything below is a rule about how the check is
+# scoped, not a suppression of findings that were left unfixed.
+
+target-version = "py311"
+line-length = 120
+
+exclude = [
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+]
+
+[lint]
+# Ruff's default set: pyflakes (F) plus the pycodestyle error families that
+# catch real mistakes - E4 imports, E7 statements, E9 syntax and IO errors.
+#
+# E501 (line too long) is deliberately not adopted yet. Thirty-six lines in
+# the repository exceed the limit, and rewrapping them - most are f-strings
+# and numpy expressions - is mechanical churn with a real chance of changing
+# a string while doing it. Adopting E501 is worth its own change; switching
+# it on here and then ignoring the findings would make this whole gate
+# decorative, which is the failure mode the issue is about.
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# core/__init__.py is a re-export table: each import is registered in __all__
+# by an __all__.extend([...]) call inside the same try/except ImportError
+# block. Ruff cannot follow a dynamically built __all__, so it reads every
+# re-export as unused. The imports are load-bearing - deleting them would
+# break `from core import RiskManager` - so the rule is scoped off for this
+# one file rather than the finding being suppressed line by line.
+"Alpha IO/core/__init__.py" = ["F401"]

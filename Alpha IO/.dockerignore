@@ -1,0 +1,36 @@
+# ATOS-P2-DEPLOY-001: runtime secrets are injected, never baked into an image.
+#
+# The COPY lines in the Dockerfiles are broad by necessity, so the exclusion
+# has to live here. Every path below either holds credentials today or is the
+# place someone will put them next.
+.credentials
+.credentials/
+.env
+.env.*
+!.env.*.example
+config/
+secrets
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*_rsa
+id_*
+**/alpaca_credentials.json
+**/credentials.json
+**/*.salt
+
+# Build and test noise that has no business in a production image.
+.git
+.github
+.pytest_cache
+.ruff_cache
+**/__pycache__
+*.pyc
+*.pyo
+htmlcov
+.coverage
+logs
+data/*.db
+data/*.sqlite*

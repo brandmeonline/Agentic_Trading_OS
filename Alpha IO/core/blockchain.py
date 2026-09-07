@@ -13,14 +13,10 @@ Next-generation multi-chain support with:
 
 from __future__ import annotations
 
-import json
-import hashlib
-import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any
 from enum import Enum
-from pathlib import Path
 import threading
 
 
@@ -662,6 +658,25 @@ class GasTracker:
         }
 
 
+
+def _plain(value):
+    """Recursively replace Enum members with their values.
+
+    The registry stores ChainType and ProtocolType members, including inside
+    the per-protocol ``chains`` list. Those do not survive ``jsonify``, so
+    before this every request to /api/blockchain/defi returned an error and
+    the DeFi page rendered as though there were simply no protocols — an
+    outage that looked exactly like an empty result.
+    """
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
 class BlockchainManager:
     """Main blockchain manager class."""
 
@@ -737,7 +752,11 @@ class BlockchainManager:
             protocols_by_type[protocol_type.value] = [
                 {
                     "id": p,
-                    **ProtocolRegistry.get_protocol(p)
+                    # The registry stores ChainType members, which do not
+                    # survive jsonify. Before this, /api/blockchain/defi
+                    # returned an error for every request and the DeFi page
+                    # rendered as though there were simply no protocols.
+                    **_plain(ProtocolRegistry.get_protocol(p)),
                 }
                 for p in protocols
             ]

@@ -1,7 +1,9 @@
 """
 Live Exchange API Connectors.
 
-Production-grade exchange connectivity:
+Exchange connectivity. IMPORTANT: the Binance and Coinbase request paths
+are simulated - _request() builds nothing and returns _mock_request() output.
+The signing helpers are real; the connectivity is not. The declared surface:
 - Binance (Spot, Futures, WebSocket)
 - Coinbase (Advanced Trade API, WebSocket)
 - Abstract base classes for custom exchanges
@@ -12,19 +14,16 @@ Production-grade exchange connectivity:
 from __future__ import annotations
 
 import numpy as np
-import json
 import time
 import hashlib
 import hmac
 import base64
 import threading
-import queue
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable, Union
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
-from collections import deque
+from datetime import datetime
 import urllib.parse
 
 
@@ -309,7 +308,7 @@ class AuthHelper:
         """Generate unique client order ID."""
         timestamp = int(time.time() * 1000)
         random_suffix = hashlib.md5(
-            f"{timestamp}{np.random.random()}".encode()
+            f"{timestamp}{np.random.random()}".encode(), usedforsecurity=False
         ).hexdigest()[:8]
         return f"{prefix}_{timestamp}_{random_suffix}"
 
@@ -536,8 +535,10 @@ class BinanceConnector(ExchangeConnector):
         """Make HTTP request to Binance API."""
         self.rate_limiter.acquire()
 
-        url = f"{self.base_url}{endpoint}"
-        headers = {"X-MBX-APIKEY": self.config.api_key} if self.config.api_key else {}
+        # No request is actually made: this method returns mock data (see
+        # below). A real implementation would GET f"{self.base_url}{endpoint}"
+        # with an X-MBX-APIKEY header. The URL and headers are not built here
+        # because building them and discarding them reads like a live call.
 
         if params is None:
             params = {}
@@ -607,10 +608,10 @@ class BinanceConnector(ExchangeConnector):
                 t = int((time.time() - (n - i) * 3600) * 1000)
                 o = base_price + np.random.randn() * 100
                 h = o + abs(np.random.randn() * 50)
-                l = o - abs(np.random.randn() * 50)
+                lo = o - abs(np.random.randn() * 50)
                 c = o + np.random.randn() * 30
                 v = abs(np.random.randn() * 100) + 10
-                data.append([t, str(o), str(h), str(l), str(c), str(v)])
+                data.append([t, str(o), str(h), str(lo), str(c), str(v)])
             return data
         return {}
 
@@ -930,27 +931,12 @@ class CoinbaseConnector(ExchangeConnector):
         """Make authenticated request to Coinbase API."""
         self.rate_limiter.acquire()
 
-        timestamp = str(int(time.time()))
-        body_str = json.dumps(body) if body else ""
-
-        # Generate signature
-        signature = AuthHelper.coinbase_signature(
-            self.config.api_secret,
-            timestamp,
-            method,
-            endpoint,
-            body_str
-        )
-
-        headers = {
-            "CB-ACCESS-KEY": self.config.api_key,
-            "CB-ACCESS-SIGN": signature,
-            "CB-ACCESS-TIMESTAMP": timestamp,
-            "CB-ACCESS-PASSPHRASE": self.config.passphrase,
-            "Content-Type": "application/json",
-        }
-
-        # Mock request for demonstration
+        # Simulated, like the Binance path above. A real request would sign
+        # with AuthHelper.coinbase_signature(api_secret, timestamp, method,
+        # endpoint, body) and send CB-ACCESS-KEY, CB-ACCESS-SIGN,
+        # CB-ACCESS-TIMESTAMP, CB-ACCESS-PASSPHRASE and Content-Type. None of
+        # that is built here, because building a signed request and then
+        # discarding it reads like a live call in a module that makes none.
         return self._mock_request(method, endpoint, params, body)
 
     def _mock_request(
@@ -1074,7 +1060,7 @@ class CoinbaseConnector(ExchangeConnector):
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         """Cancel order on Coinbase."""
         try:
-            self._request("POST", f"/api/v3/brokerage/orders/batch_cancel", body={"order_ids": [order_id]})
+            self._request("POST", "/api/v3/brokerage/orders/batch_cancel", body={"order_ids": [order_id]})
             return True
         except Exception:
             return False
